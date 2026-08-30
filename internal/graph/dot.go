@@ -158,32 +158,13 @@ func DependenciesFromDOT(dot []byte, isResource func(string) bool) map[string]ma
 	return deps
 }
 
-var (
-	allKeysRe      = regexp.MustCompile(`\[([^\]]+)\]`)
-	digitsRe       = regexp.MustCompile(`^\d+$`)
-	modulePrefixRe = regexp.MustCompile(`^((?:module\.[^.\[]+(?:\[[^\]]*\])?\.)*)`)
-)
+var modulePrefixRe = regexp.MustCompile(`^((?:module\.[^.\[]+(?:\[[^\]]*\])?\.)*)`)
 
 // modulePath returns the module instance an address lives in, keys included:
 // module.rt["web"].aws_route_table.rt[0] -> module.rt["web"]. The root module
 // is the empty string.
 func modulePath(addr string) string {
 	return strings.TrimSuffix(modulePrefixRe.FindString(addr), ".")
-}
-
-// namedKeys returns an address's for_each keys, ignoring positional indexes.
-// module.rt["web-az1"].aws_route_table.rt[0] yields {"web-az1"}: the string
-// key identifies which copy this is, while [0] is shared by every copy and so
-// tells instances apart from nothing.
-func namedKeys(addr string) map[string]bool {
-	out := map[string]bool{}
-	for _, m := range allKeysRe.FindAllStringSubmatch(addr, -1) {
-		k := strings.Trim(m[1], `"`)
-		if !digitsRe.MatchString(k) {
-			out[k] = true
-		}
-	}
-	return out
 }
 
 // applyDOTDeps adds instance edges for configuration pairs the reference

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/AsysGupta/terradune/internal/graph"
 	"github.com/AsysGupta/terradune/internal/ingest"
@@ -168,7 +169,15 @@ func run(ctx context.Context, dir string, port int, printOnly bool, opts ingest.
 		return err
 	}
 	log.Printf("terradune serving http://%s", addr)
-	return http.Serve(ln, srv.Handler())
+	// Timeouts bound how long a stalled client can hold a connection. The
+	// write timeout stays open because /events is a long-lived stream.
+	server := &http.Server{
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return server.Serve(ln)
 }
 
 func planAll(workspaces []ingest.Workspace, plan func(ingest.Workspace)) {

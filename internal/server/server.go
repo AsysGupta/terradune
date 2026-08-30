@@ -5,6 +5,7 @@ package server
 import (
 	"embed"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"sync"
@@ -113,6 +114,14 @@ func (s *Server) broadcastLocked() {
 	}
 }
 
+// writeOrLog reports a failed response write instead of discarding it: the
+// request is already past the point where an error could be sent.
+func writeOrLog(w http.ResponseWriter, b []byte) {
+	if _, err := w.Write(b); err != nil {
+		log.Printf("terradune: writing response: %v", err)
+	}
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -124,8 +133,12 @@ func (s *Server) Handler() http.Handler {
 		// The page changes whenever terradune is rebuilt, and a cached copy
 		// looks exactly like a broken feature.
 		w.Header().Set("Cache-Control", "no-store")
-		page, _ := static.ReadFile("index.html")
-		w.Write(page)
+		page, err := static.ReadFile("index.html")
+		if err != nil {
+			http.Error(w, "page missing from binary", http.StatusInternalServerError)
+			return
+		}
+		writeOrLog(w, page)
 	})
 	mux.Handle("/assets/", http.FileServer(http.FS(static)))
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +146,7 @@ func (s *Server) Handler() http.Handler {
 		payload := s.current
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(payload)
+		writeOrLog(w, payload)
 	})
 	mux.HandleFunc("/resource", s.handleResource)
 	mux.HandleFunc("/events", s.handleEvents)
@@ -187,7 +200,12 @@ func (s *Server) handleResource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	// The address is deliberately left out: it comes from the request, and
+	// putting request data into a log is how forged log lines happen. An
+	// encode failure here is a client that hung up, so the error is enough.
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("terradune: encoding resource response: %v", err)
+	}
 }
 
 func relate(byAddr map[string]*graph.Detail, addr string) related {
@@ -219,12 +237,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
+	// A browser that navigates away closes the stream mid-write, so a failed
+	// write ends this client rather than being an error worth reporting.
 	write := func(payload []byte) bool {
-		if _, err := w.Write([]byte("data: ")); err != nil {
-			return false
+		for _, chunk := range [][]byte{[]byte("data: "), payload, []byte("\n\n")} {
+			if _, err := w.Write(chunk); err != nil {
+				return false
+			}
 		}
-		w.Write(payload)
-		w.Write([]byte("\n\n"))
 		flusher.Flush()
 		return true
 	}

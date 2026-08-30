@@ -143,13 +143,19 @@
             padding: 12px 14px; margin-bottom: 12px; }
   .others .grid { display: grid; gap: 7px;
                   grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
-  .cat { margin-bottom: 14px; }
-  .cat:last-child { margin-bottom: 0; }
+  /* Categories flow across the width rather than stacking, so a group of one
+     does not leave the rest of the row empty. Each keeps its own column and
+     grows only as tall as it needs. */
+  .cats { display: grid; gap: 12px 16px; align-items: start;
+          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .cat { min-width: 0; }
   .cat > h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 7px;
               font-size: 11.5px; font-weight: 700; color: var(--text); }
   .cat > h4 svg { width: 15px; height: 15px; flex: none; }
   .cat > h4 em { font-style: normal; color: var(--faint); font-weight: 400;
                  font-size: 11px; }
+  .col .cat { margin-bottom: 12px; }
+  .col .cat:last-child { margin-bottom: 0; }
   .hint { color: var(--faint); font-size: 11px; margin: 6px 2px 0; }
 
   #graph { flex: 1; min-height: 0; display: none; cursor: grab; background: var(--bg); }
@@ -604,7 +610,7 @@ function cardHTML(n, detail, nested) {
 
 // groupedHTML lists resources under a heading per type, so a dozen mixed
 // cards read as "3 instances, 4 interfaces, 2 volumes" instead of a wall.
-function groupedHTML(list) {
+function groupedHTML(list, stacked) {
   const byType = new Map();
   for (const n of list) {
     if (!byType.has(n.type)) byType.set(n.type, []);
@@ -614,13 +620,14 @@ function groupedHTML(list) {
     const i = CATEGORY_ORDER.indexOf(t);
     return i === -1 ? CATEGORY_ORDER.length : i;
   };
-  return [...byType.entries()]
+  const blocks = [...byType.entries()]
     .sort((a, b) => rank(a[0]) - rank(b[0]) || label(a[0]).localeCompare(label(b[0])))
     .map(([type, items]) => `<div class="cat">
         <h4>${iconSVG(type)}<span>${esc(label(type))}</span>
           <em>${items.length}</em></h4>
-        <div class="grid">${items.map(n => cardHTML(n)).join('')}</div>
+        <div class="${stacked ? 'stack' : 'grid'}">${items.map(n => cardHTML(n)).join('')}</div>
       </div>`).join('');
+  return stacked ? blocks : `<div class="cats">${blocks}</div>`;
 }
 
 function panelHTML(p, m, vis) {
@@ -649,10 +656,15 @@ function panelHTML(p, m, vis) {
       }).join('')}
     </div>`).join('') || '<div class="empty">none</div>';
 
-  const col = (title, items) => `<div class="col">
-      <h3>${title} <span>(${items.length})</span></h3>
-      ${items.length ? items.map(n => cardHTML(n)).join('') : '<div class="empty">none</div>'}
-    </div>`;
+  const col = (title, items) => {
+    const types = new Set(items.map(n => n.type));
+    // A mixed column reads better under headings — a NAT gateway should be
+    // findable as a NAT gateway, not as one of seven "network connections".
+    const body = !items.length ? '<div class="empty">none</div>'
+      : types.size > 1 ? groupedHTML(items, true)
+      : items.map(n => cardHTML(n)).join('');
+    return `<div class="col"><h3>${title} <span>(${items.length})</span></h3>${body}</div>`;
+  };
 
   return `<div class="vpc-panel">
     <div class="vpc-head">

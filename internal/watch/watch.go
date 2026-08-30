@@ -4,6 +4,7 @@ package watch
 import (
 	"context"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,9 @@ func Watch(ctx context.Context, root string, onChange func(paths []string)) erro
 	defer w.Close()
 
 	addTree := func(dir string) {
-		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		// A tree that cannot be walked simply is not watched; the diagram
+		// still builds, it just will not refresh by itself.
+		if werr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -46,10 +49,14 @@ func Watch(ctx context.Context, root string, onChange func(paths []string)) erro
 				if skipDir(d.Name()) {
 					return filepath.SkipDir
 				}
-				w.Add(path)
+				if aerr := w.Add(path); aerr != nil {
+					log.Printf("terradune: not watching %s: %v", path, aerr)
+				}
 			}
 			return nil
-		})
+		}); werr != nil {
+			log.Printf("terradune: scanning %s: %v", dir, werr)
+		}
 	}
 	addTree(root)
 

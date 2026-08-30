@@ -421,6 +421,32 @@ check('a pin on a card that disappears is dropped', function () {
   renderMap(STATE);
 });
 
+check('a mixed column is grouped, a single-type one is not', function () {
+  filter.text = ''; filter.statuses = new Set();
+  renderMap(STATE);
+  var h = __sinks['mapbody'] || '';
+  var headings = {}, re = /<span>([^<]*)<\/span>\s*<em>(\d+)<\/em><\/h4>/g, m;
+  while ((m = re.exec(h)) !== null) headings[m[1]] = Number(m[2]);
+  // The vpc fixture's network connections hold gateways of two kinds.
+  ['NAT gateway', 'Internet gateway'].forEach(function (want) {
+    if (!headings[want]) {
+      throw new Error('no category heading for ' + want +
+        '; got ' + Object.keys(headings).join(', '));
+    }
+  });
+  // Route tables are all one type, so they are listed without a heading.
+  if (headings['Route table']) {
+    throw new Error('a single-type column was given a redundant heading');
+  }
+});
+
+check('categories flow across the width', function () {
+  var h = __sinks['mapbody'] || '';
+  if (h.indexOf('class="cats"') === -1) {
+    throw new Error('categories are not laid out to share the row');
+  }
+});
+
 check('links are not duplicated', function () {
   for (var i = 0; i < STATE.workspaces.length; i++) {
     var m = buildMap(STATE.workspaces[i]), seen = {};
