@@ -68,6 +68,52 @@ func TestBuildModularPlan(t *testing.T) {
 	}
 }
 
+func TestBuildVPCPlanPairsInstancesByIndex(t *testing.T) {
+	g := Build(loadFixture(t, "testdata/vpc_plan.json"))
+
+	if len(g.Nodes) != 21 {
+		t.Fatalf("got %d nodes, want 21", len(g.Nodes))
+	}
+
+	edges := map[Edge]bool{}
+	for _, e := range g.Edges {
+		edges[e] = true
+	}
+	want := []Edge{
+		// count.index in the same expression pairs instances by index
+		{From: "aws_nat_gateway.main[0]", To: "aws_eip.nat[0]"},
+		{From: "aws_nat_gateway.main[1]", To: "aws_eip.nat[1]"},
+		{From: "aws_nat_gateway.main[0]", To: "aws_subnet.public[0]"},
+		{From: "aws_route.private_nat[1]", To: "aws_nat_gateway.main[1]"},
+		{From: "aws_route_table_association.private[0]", To: "aws_subnet.private[0]"},
+		// indexed -> single-instance edges are unaffected by pairing
+		{From: "aws_route_table_association.public[1]", To: "aws_route_table.public"},
+		{From: "aws_subnet.public[0]", To: "aws_vpc.main"},
+		// depends_on stays resource-level: every eip depends on the igw
+		{From: "aws_eip.nat[0]", To: "aws_internet_gateway.main"},
+		{From: "aws_eip.nat[1]", To: "aws_internet_gateway.main"},
+	}
+	for _, e := range want {
+		if !edges[e] {
+			t.Errorf("missing edge %s -> %s", e.From, e.To)
+		}
+	}
+	unwanted := []Edge{
+		{From: "aws_nat_gateway.main[0]", To: "aws_eip.nat[1]"},
+		{From: "aws_nat_gateway.main[1]", To: "aws_subnet.public[0]"},
+		{From: "aws_route.private_nat[0]", To: "aws_route_table.private[1]"},
+		{From: "aws_route_table_association.private[1]", To: "aws_subnet.private[0]"},
+	}
+	for _, e := range unwanted {
+		if edges[e] {
+			t.Errorf("unexpected cross-index edge %s -> %s", e.From, e.To)
+		}
+	}
+	if len(g.Edges) != 29 {
+		t.Errorf("got %d edges, want 29", len(g.Edges))
+	}
+}
+
 func TestStripIndexes(t *testing.T) {
 	cases := map[string]string{
 		`module.x["a"].aws_foo.bar[0]`: "module.x.aws_foo.bar",

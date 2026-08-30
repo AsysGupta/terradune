@@ -36,7 +36,20 @@ type Graph struct {
 	Edges []Edge `json:"edges"`
 }
 
-var indexRe = regexp.MustCompile(`\[[^\]]*\]`)
+var (
+	indexRe         = regexp.MustCompile(`\[[^\]]*\]`)
+	trailingIndexRe = regexp.MustCompile(`\[([^\]]+)\]$`)
+)
+
+// instanceKey returns the instance's own index — "0" for aws_eip.nat[0],
+// `"a"` for aws_foo.b["a"] — or "" for a single-instance resource.
+func instanceKey(addr string) string {
+	m := trailingIndexRe.FindStringSubmatch(addr)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
 
 // stripIndexes turns module.x["a"].aws_foo.bar[0] into module.x.aws_foo.bar,
 // the form used by config addresses.
@@ -133,24 +146,53 @@ func (r *resolver) walkModule(mod *tfjson.ConfigModule, moduleAddr string) {
 			continue
 		}
 		fromCfg := joinAddr(moduleAddr, res.Type+"."+res.Name)
-		refs := map[string]bool{}
+
+		// Each expression is resolved separately: when count.index/each.key
+		// appears next to a resource reference in the same expression, the
+		// edge pairs instances index-to-index instead of fanning out to all.
+		type refGroup struct {
+			refs   map[string]bool
+			paired bool
+		}
+		var groups []refGroup
 		for _, expr := range res.Expressions {
+			refs := map[string]bool{}
 			collectRefs(expr, refs)
+			if len(refs) == 0 {
+				continue
+			}
+			groups = append(groups, refGroup{
+				refs:   refs,
+				paired: refs["count.index"] || refs["each.key"] || refs["each.value"],
+			})
 		}
-		for _, dep := range res.DependsOn {
-			refs[dep] = true
+		if len(res.DependsOn) > 0 {
+			refs := map[string]bool{}
+			for _, dep := range res.DependsOn {
+				refs[dep] = true
+			}
+			groups = append(groups, refGroup{refs: refs}) // depends_on is resource-level: full fan-out
 		}
-		targets := map[string]bool{}
-		for ref := range refs {
-			r.resolveRef(ref, moduleAddr, targets, map[string]bool{})
-		}
-		for toCfg := range targets {
-			for _, from := range r.instances[fromCfg] {
-				for _, to := range r.instances[toCfg] {
-					e := Edge{From: from, To: to}
-					if from != to && !r.seen[e] {
-						r.seen[e] = true
-						r.graph.Edges = append(r.graph.Edges, e)
+
+		for _, grp := range groups {
+			targets := map[string]bool{}
+			for ref := range grp.refs {
+				r.resolveRef(ref, moduleAddr, targets, map[string]bool{})
+			}
+			for toCfg := range targets {
+				for _, from := range r.instances[fromCfg] {
+					for _, to := range r.instances[toCfg] {
+						if grp.paired {
+							fk, tk := instanceKey(from), instanceKey(to)
+							if fk != "" && tk != "" && fk != tk {
+								continue
+							}
+						}
+						e := Edge{From: from, To: to}
+						if from != to && !r.seen[e] {
+							r.seen[e] = true
+							r.graph.Edges = append(r.graph.Edges, e)
+						}
 					}
 				}
 			}
