@@ -218,12 +218,14 @@ func (r *resolver) applyDOTDeps(deps map[string]map[string]bool) {
 			if len(toInstances) == 0 {
 				continue
 			}
-			// One side single: every edge is unambiguous.
-			if len(fromInstances) == 1 || len(toInstances) == 1 {
+			// A single target is unambiguous however many depend on it.
+			// A single dependant facing many targets is not: one load
+			// balancer reached through a local depends on the subnet
+			// resource, not on all twelve of its instances, and claiming
+			// otherwise says it sits in every subnet in the VPC.
+			if len(toInstances) == 1 {
 				for _, from := range fromInstances {
-					for _, to := range toInstances {
-						r.addEdge(from, to)
-					}
+					r.addEdge(from, toInstances[0])
 				}
 				continue
 			}

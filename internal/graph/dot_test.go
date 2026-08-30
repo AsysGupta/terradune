@@ -2,6 +2,7 @@ package graph
 
 import (
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,69 @@ func TestCorrespondsIgnoresPositionalIndexes(t *testing.T) {
 	}
 	if corresponds("aws_eip.n[0]", "aws_nat_gateway.g[1]") {
 		t.Error("different positions must not correspond")
+	}
+}
+
+func TestApplyDOTDepsLeavesAmbiguousSpansAlone(t *testing.T) {
+	// One load balancer whose subnets are chosen inside a local, so the only
+	// thing the plan records is a dependency on the subnet resource itself.
+	subnets := []string{
+		`module.vpc.aws_subnet.s["a"]`, `module.vpc.aws_subnet.s["b"]`,
+		`module.vpc.aws_subnet.s["c"]`,
+	}
+	r := &resolver{
+		instances: map[string][]string{
+			"module.gwlb.aws_lb.lb":    {"module.gwlb.aws_lb.lb[0]"},
+			"module.vpc.aws_subnet.s":  subnets,
+			"aws_internet_gateway.igw": {"aws_internet_gateway.igw[0]"},
+		},
+		seen:     map[Edge]bool{},
+		cfgPairs: map[string]bool{},
+		graph:    &Graph{},
+	}
+	r.applyDOTDeps(map[string]map[string]bool{
+		"module.gwlb.aws_lb.lb": {
+			"module.vpc.aws_subnet.s":  true, // ambiguous: which of the three?
+			"aws_internet_gateway.igw": true, // unambiguous: there is only one
+		},
+	})
+
+	for _, e := range r.graph.Edges {
+		if strings.Contains(e.To, "aws_subnet") {
+			t.Errorf("guessed a subnet for a load balancer: %s -> %s", e.From, e.To)
+		}
+	}
+	if len(r.graph.Edges) != 1 || r.graph.Edges[0].To != "aws_internet_gateway.igw[0]" {
+		t.Errorf("expected only the single-target edge, got %+v", r.graph.Edges)
+	}
+}
+
+func TestApplyDOTDepsPairsByKey(t *testing.T) {
+	r := &resolver{
+		instances: map[string][]string{
+			`module.rt.aws_route_table_association.a`: {
+				`module.rt["x"].aws_route_table_association.a[0]`,
+				`module.rt["y"].aws_route_table_association.a[0]`,
+			},
+			`module.rt.aws_route_table.rt`: {
+				`module.rt["x"].aws_route_table.rt[0]`,
+				`module.rt["y"].aws_route_table.rt[0]`,
+			},
+		},
+		seen:     map[Edge]bool{},
+		cfgPairs: map[string]bool{},
+		graph:    &Graph{},
+	}
+	r.applyDOTDeps(map[string]map[string]bool{
+		`module.rt.aws_route_table_association.a`: {`module.rt.aws_route_table.rt`: true},
+	})
+	if len(r.graph.Edges) != 2 {
+		t.Fatalf("want 2 paired edges, got %d: %+v", len(r.graph.Edges), r.graph.Edges)
+	}
+	for _, e := range r.graph.Edges {
+		if namedKeys(e.From)["x"] != namedKeys(e.To)["x"] {
+			t.Errorf("edge crosses for_each keys: %s -> %s", e.From, e.To)
+		}
 	}
 }
 
