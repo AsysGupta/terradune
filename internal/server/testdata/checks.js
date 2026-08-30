@@ -98,6 +98,61 @@ check('markup escaping neutralises injected html', function () {
   if (esc('<img src=x onerror=1>').indexOf('<') !== -1) throw new Error('not escaped');
 });
 
+// --- review mode: search and status filtering ---------------------------
+function cardCount() {
+  return ((__sinks['mapbody'] || '').match(/class="card /g) || []).length;
+}
+
+var __all = cardCount();
+
+check('search narrows the map', function () {
+  filter.text = 'nat';
+  renderMap(STATE);
+  var n = cardCount();
+  if (n === 0) throw new Error('search for "nat" matched nothing');
+  if (n >= __all) throw new Error('search did not narrow: ' + n + ' of ' + __all);
+  var h = __sinks['mapbody'] || '';
+  if (h.indexOf('aws_security_group') !== -1) throw new Error('unrelated resource survived');
+});
+
+check('search matches attribute values, not just names', function () {
+  filter.text = '10.0.100.0';
+  renderMap(STATE);
+  if (cardCount() === 0) throw new Error('cidr search matched nothing');
+});
+
+check('a matching resource keeps the subnet that contains it', function () {
+  filter.text = 'app-server-0';
+  renderMap(STATE);
+  var h = __sinks['mapbody'] || '';
+  if (h.indexOf('class="contents"') === -1) throw new Error('nested match lost its subnet');
+});
+
+check('status filter shows only that status', function () {
+  filter.text = '';
+  filter.statuses = new Set(['destroy']);
+  renderMap(STATE);
+  if (cardCount() !== 0) throw new Error('fixtures have no destroys, got ' + cardCount());
+  filter.statuses = new Set(['create']);
+  renderMap(STATE);
+  if (cardCount() === 0) throw new Error('create filter matched nothing');
+  var h = __sinks['mapbody'] || '';
+  if (h.indexOf('class="card existing') !== -1) throw new Error('non-create card survived');
+});
+
+check('the graph honours the same filter', function () {
+  filter.statuses = new Set(['destroy']);
+  var root = toElk(STATE);
+  if (root.edges.length !== 0) throw new Error('edges survived an empty filter');
+});
+
+check('clearing filters restores every card', function () {
+  filter.text = '';
+  filter.statuses = new Set();
+  renderMap(STATE);
+  if (cardCount() !== __all) throw new Error('got ' + cardCount() + ', want ' + __all);
+});
+
 if (__failures) {
   print('\n' + __failures + ' FAILURE(S)');
 } else {
