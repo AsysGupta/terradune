@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/AsysGupta/terradune/internal/graph"
@@ -20,6 +21,13 @@ import (
 
 var version = "dev"
 
+// repeatable collects a flag given more than once, like terraform's own
+// -var-file and -var.
+type repeatable []string
+
+func (r *repeatable) String() string     { return strings.Join(*r, ",") }
+func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
+
 // planConcurrency bounds parallel `terraform plan` runs: enough to keep a
 // multi-workspace scan quick without thrashing a laptop.
 const planConcurrency = 3
@@ -28,6 +36,10 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	printOnly := flag.Bool("print", false, "print the inventory and graph once, without serving")
 	port := flag.Int("port", 8383, "port for the local server")
+	refresh := flag.Bool("refresh", false, "refresh state before planning (slower, needs live credentials)")
+	var varFiles, vars repeatable
+	flag.Var(&varFiles, "var-file", "variable file to pass to terraform (repeatable)")
+	flag.Var(&vars, "var", "variable as name=value (repeatable)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terradune [flags] <path>\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(),
@@ -47,13 +59,14 @@ func main() {
 		dir = flag.Arg(0)
 	}
 
-	if err := run(context.Background(), dir, *port, *printOnly); err != nil {
+	opts := ingest.Options{VarFiles: varFiles, Vars: vars, Refresh: *refresh}
+	if err := run(context.Background(), dir, *port, *printOnly, opts); err != nil {
 		fmt.Fprintln(os.Stderr, "terradune:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, dir string, port int, printOnly bool) error {
+func run(ctx context.Context, dir string, port int, printOnly bool, opts ingest.Options) error {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -66,7 +79,7 @@ func run(ctx context.Context, dir string, port int, printOnly bool) error {
 	if printOnly {
 		for _, ws := range workspaces {
 			fmt.Printf("\n=== %s ===\n", ws.Name)
-			inv, err := ingest.Load(ctx, ws.Dir)
+			inv, err := ingest.Load(ctx, ws.Dir, opts)
 			if err != nil {
 				fmt.Printf("error: %v\n", err)
 				continue
@@ -80,7 +93,7 @@ func run(ctx context.Context, dir string, port int, printOnly bool) error {
 	srv := server.New(root)
 	plan := func(ws ingest.Workspace) {
 		srv.SetRebuilding(ws.Name, ws.Dir)
-		inv, err := ingest.Load(ctx, ws.Dir)
+		inv, err := ingest.Load(ctx, ws.Dir, opts)
 		if err != nil {
 			log.Printf("%s: plan failed: %v", ws.Name, err)
 			srv.SetError(ws.Name, ws.Dir, err.Error())

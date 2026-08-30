@@ -43,8 +43,16 @@ type Inventory struct {
 	Plan             *tfjson.Plan // the raw plan, for graph building
 }
 
+// Options are the plan inputs a real workspace usually needs: most are not
+// runnable without variables.
+type Options struct {
+	VarFiles []string // paths passed to terraform as -var-file
+	Vars     []string // "name=value" pairs passed as -var
+	Refresh  bool     // refresh state before planning
+}
+
 // Load runs plan+show in dir and returns the parsed inventory.
-func Load(ctx context.Context, dir string) (*Inventory, error) {
+func Load(ctx context.Context, dir string, opts Options) (*Inventory, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -73,7 +81,22 @@ func Load(ctx context.Context, dir string) (*Inventory, error) {
 	defer os.RemoveAll(tmp)
 	planFile := filepath.Join(tmp, "tfplan")
 
-	if _, err := tf.Plan(ctx, tfexec.Out(planFile)); err != nil {
+	planOpts := []tfexec.PlanOption{tfexec.Out(planFile), tfexec.Refresh(opts.Refresh)}
+	for _, vf := range opts.VarFiles {
+		abs, err := filepath.Abs(vf)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return nil, fmt.Errorf("var file %s: %w", vf, err)
+		}
+		planOpts = append(planOpts, tfexec.VarFile(abs))
+	}
+	for _, v := range opts.Vars {
+		planOpts = append(planOpts, tfexec.Var(v))
+	}
+
+	if _, err := tf.Plan(ctx, planOpts...); err != nil {
 		return nil, fmt.Errorf("terraform plan failed: %w", err)
 	}
 
