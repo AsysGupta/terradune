@@ -163,6 +163,111 @@ check('module for_each keys name their resources', function () {
   if (displayName(plain) !== 'n[1]') throw new Error('got ' + displayName(plain));
 });
 
+// --- directional path tracing on hover ----------------------------------
+check('links point along the columns, vpc -> subnet -> route table -> gateway', function () {
+  filter.text = ''; filter.statuses = new Set();
+  var vpcWs = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'vpc') vpcWs = STATE.workspaces[i];
+  }
+  if (!vpcWs) throw new Error('no vpc workspace in fixtures');
+  var m = buildMap(vpcWs);
+  var byId = {};
+  for (var j = 0; j < vpcWs.nodes.length; j++) byId[vpcWs.nodes[j].id] = vpcWs.nodes[j];
+  var kinds = {};
+  for (var k = 0; k < m.links.length; k++) {
+    var l = m.links[k];
+    kinds[byId[l.from].type + '->' + byId[l.to].type] = true;
+  }
+  var want = ['aws_vpc->aws_subnet', 'aws_subnet->aws_route_table',
+              'aws_route_table->aws_internet_gateway', 'aws_subnet->aws_nat_gateway'];
+  for (var w = 0; w < want.length; w++) {
+    if (!kinds[want[w]]) throw new Error('missing link direction ' + want[w]);
+  }
+  // The reverse of containment must not appear: the VPC leads to its subnets.
+  if (kinds['aws_subnet->aws_vpc']) throw new Error('containment points the wrong way');
+});
+
+check('hovering a subnet traces its own path and not a sibling', function () {
+  var vpcWs = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'vpc') vpcWs = STATE.workspaces[i];
+  }
+  var m = buildMap(vpcWs);
+  var out = new Map(), into = new Map();
+  for (var k = 0; k < m.links.length; k++) {
+    var l = m.links[k];
+    if (!out.has(l.from)) out.set(l.from, new Set());
+    if (!into.has(l.to)) into.set(l.to, new Set());
+    out.get(l.from).add(l.to); into.get(l.to).add(l.from);
+  }
+  var traced = tracePath('aws_subnet.public[0]', out, into);
+  if (!traced.nodes.has('aws_vpc.main')) throw new Error('lost the containing VPC');
+  if (!traced.nodes.has('aws_route_table.public')) throw new Error('lost the route table');
+  if (!traced.nodes.has('aws_internet_gateway.main')) throw new Error('lost the gateway');
+  // public[1] shares that route table; reaching it would need a backwards hop.
+  if (traced.nodes.has('aws_subnet.public[1]')) throw new Error('lit up a sibling subnet');
+  if (traced.nodes.has('aws_subnet.private[0]')) throw new Error('lit up an unrelated subnet');
+  // Edges are recorded in their drawn direction so the arrowheads match.
+  if (!traced.edges.has('aws_subnet.public[0] aws_route_table.public')) {
+    throw new Error('subnet -> route table edge not traced');
+  }
+  if (!traced.edges.has('aws_vpc.main aws_subnet.public[0]')) {
+    throw new Error('vpc -> subnet edge not traced in its drawn direction');
+  }
+});
+
+check('hovering a route table reaches its subnets and its gateway', function () {
+  var vpcWs = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'vpc') vpcWs = STATE.workspaces[i];
+  }
+  var m = buildMap(vpcWs);
+  var out = new Map(), into = new Map();
+  for (var k = 0; k < m.links.length; k++) {
+    var l = m.links[k];
+    if (!out.has(l.from)) out.set(l.from, new Set());
+    if (!into.has(l.to)) into.set(l.to, new Set());
+    out.get(l.from).add(l.to); into.get(l.to).add(l.from);
+  }
+  var traced = tracePath('aws_route_table.public', out, into);
+  if (!traced.nodes.has('aws_subnet.public[0]')) throw new Error('lost an associated subnet');
+  if (!traced.nodes.has('aws_subnet.public[1]')) throw new Error('lost an associated subnet');
+  if (!traced.nodes.has('aws_internet_gateway.main')) throw new Error('lost the gateway');
+});
+
+check('ribbons carry arrowheads and record their direction', function () {
+  renderMap(STATE);
+  var defs = __sinks['ribbons'] || '';
+  if (defs.indexOf('id="arr-dim"') === -1 || defs.indexOf('id="arr-hot"') === -1) {
+    throw new Error('arrow markers not defined');
+  }
+  var drawn = document.getElementById('ribbons').children;
+  if (!drawn.length) throw new Error('no ribbons drawn');
+  var withArrow = 0, directed = 0;
+  for (var i = 0; i < drawn.length; i++) {
+    if (drawn[i].getAttribute('marker-end')) withArrow++;
+    if (drawn[i].dataset.from && drawn[i].dataset.to) directed++;
+  }
+  if (withArrow !== drawn.length) {
+    throw new Error(withArrow + ' of ' + drawn.length + ' ribbons have arrowheads');
+  }
+  if (directed !== drawn.length) throw new Error('ribbons missing a direction');
+  print('       (' + drawn.length + ' directed ribbons)');
+});
+
+check('a ribbon runs from the vpc to its subnet, not the reverse', function () {
+  var drawn = document.getElementById('ribbons').children;
+  var found = false, reversed = false;
+  for (var i = 0; i < drawn.length; i++) {
+    var f = drawn[i].dataset.from, t = drawn[i].dataset.to;
+    if (f === 'aws_vpc.main' && t === 'aws_subnet.public[0]') found = true;
+    if (t === 'aws_vpc.main' && f === 'aws_subnet.public[0]') reversed = true;
+  }
+  if (!found) throw new Error('no vpc -> subnet ribbon');
+  if (reversed) throw new Error('ribbon drawn subnet -> vpc');
+});
+
 check('clearing filters restores every card', function () {
   filter.text = '';
   filter.statuses = new Set();

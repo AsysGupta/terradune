@@ -342,8 +342,12 @@ function buildMap(ws) {
   const depsOfType = (id, pred) =>
     (deps.get(id) || []).filter(d => nodes.has(d) && pred(nodes.get(d)));
 
+  // Links are directed, and point the way traffic and containment read across
+  // the columns: the VPC holds its subnets, a subnet is associated with a
+  // route table, and that route table reaches a gateway. Hovering then traces
+  // a path rather than lighting up a blob.
   const links = [];
-  const add = (a, b) => { if (a && b && a !== b) links.push({ a, b }); };
+  const add = (from, to) => { if (from && to && from !== to) links.push({ from, to }); };
 
   for (const [id, n] of nodes) {
     if (n.type !== 'aws_route_table_association') continue;
@@ -363,19 +367,19 @@ function buildMap(ws) {
   }
   for (const [id, n] of nodes) {
     if (n.type === 'aws_subnet' || n.type === 'aws_route_table' || GATEWAYS.has(n.type))
-      for (const v of depsOfType(id, m => m.type === 'aws_vpc')) add(id, v);
+      for (const v of depsOfType(id, m => m.type === 'aws_vpc')) add(v, id);
+    // A NAT gateway sits inside a subnet, so the subnet leads to it.
     if (n.type === 'aws_nat_gateway')
-      for (const s of depsOfType(id, m => m.type === 'aws_subnet')) add(id, s);
+      for (const s of depsOfType(id, m => m.type === 'aws_subnet')) add(s, id);
   }
 
   // A subnet is public when a route table it is associated with reaches an
   // internet gateway — the rule the AWS console itself uses.
   const subnetPublic = new Map();
-  for (const { a, b } of links) {
-    const [s, r] = nodes.get(a)?.type === 'aws_subnet' ? [a, b] : [b, a];
-    if (nodes.get(s)?.type !== 'aws_subnet' || nodes.get(r)?.type !== 'aws_route_table') continue;
-    if ((rtGateways.get(r) || new Set()).has('aws_internet_gateway')) subnetPublic.set(s, true);
-    else if (!subnetPublic.has(s)) subnetPublic.set(s, false);
+  for (const { from, to } of links) {
+    if (nodes.get(from)?.type !== 'aws_subnet' || nodes.get(to)?.type !== 'aws_route_table') continue;
+    if ((rtGateways.get(to) || new Set()).has('aws_internet_gateway')) subnetPublic.set(from, true);
+    else if (!subnetPublic.has(from)) subnetPublic.set(from, false);
   }
 
   const vpcs = [...nodes.values()].filter(n => n.type === 'aws_vpc');
@@ -407,6 +411,7 @@ function buildMap(ws) {
       if (subs.length === 1) {
         if (!p.contents.has(subs[0])) p.contents.set(subs[0], []);
         p.contents.get(subs[0]).push(n);
+        add(subs[0], n.id); // nested, so no ribbon is drawn — but the path still runs through it
       } else p.inVpc.push(n);
     }
   }
@@ -586,9 +591,16 @@ function renderMap(state) {
   wireHover(maps);
 }
 
+const RIBBON_DIM = '#c9d0d9', RIBBON_HOT = '#3d6ea8';
+
 function drawRibbons(maps) {
   const svg = $('ribbons');
-  svg.innerHTML = '';
+  svg.innerHTML = `<defs>
+    <marker id="arr-dim" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6"
+      markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#c9d0d9"/></marker>
+    <marker id="arr-hot" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5"
+      markerHeight="6.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#3d6ea8"/></marker>
+  </defs>`;
   const scroll = $('map');
   const base = scroll.getBoundingClientRect();
   svg.setAttribute('width', scroll.scrollWidth);
@@ -601,57 +613,87 @@ function drawRibbons(maps) {
              y: r.top - base.top + scroll.scrollTop, w: r.width, h: r.height };
   };
   for (const m of maps) {
-    for (const { a, b } of m.links) {
-      const A = box(a), B = box(b);
+    for (const { from, to } of m.links) {
+      const A = box(from), B = box(to);
       if (!A || !B) continue;
-      const [L, R] = A.x <= B.x ? [A, B] : [B, A];
-      const x1 = L.x + L.w, y1 = L.y + L.h / 2, x2 = R.x, y2 = R.y + R.h / 2;
-      if (x2 < x1) continue; // same column: a hook would read worse than nothing
-      const mx = (x1 + x2) / 2;
+      // The arrow always lands on the target, whichever side it sits on.
+      let x1, x2;
+      if (B.x >= A.x + A.w) { x1 = A.x + A.w; x2 = B.x; }
+      else if (A.x >= B.x + B.w) { x1 = A.x; x2 = B.x + B.w; }
+      else continue; // same column: containment already reads visually
+      const y1 = A.y + A.h / 2, y2 = B.y + B.h / 2, mx = (x1 + x2) / 2;
       const p = document.createElementNS(svgNS, 'path');
       p.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
       p.setAttribute('fill', 'none');
-      p.setAttribute('stroke', '#c3cad3');
-      p.setAttribute('stroke-width', '1.6');
-      p.dataset.a = a; p.dataset.b = b;
+      p.setAttribute('stroke', RIBBON_DIM);
+      p.setAttribute('stroke-width', '1.5');
+      p.setAttribute('marker-end', 'url(#arr-dim)');
+      p.dataset.from = from; p.dataset.to = to;
       svg.appendChild(p);
     }
   }
+}
+
+// tracePath returns everything on the route through one resource: what leads
+// to it, and what it leads on to. Walking the two directions separately is
+// what keeps a subnet's siblings out of the picture — reaching them would
+// mean going forward to the shared route table and then backwards again.
+function tracePath(id, out, into) {
+  const nodes = new Set([id]);
+  const edges = new Set();
+  const walk = (adj, forward) => {
+    const queue = [id], seen = new Set([id]);
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const next of adj.get(cur) || []) {
+        edges.add(forward ? cur + ' ' + next : next + ' ' + cur);
+        nodes.add(next);
+        if (!seen.has(next)) { seen.add(next); queue.push(next); }
+      }
+    }
+  };
+  walk(out, true);   // onward: subnet -> route table -> gateway
+  walk(into, false); // back:   vpc -> subnet
+  return { nodes, edges };
 }
 
 function wireHover(maps) {
   const scroll = $('map');
   const cards = [...scroll.querySelectorAll('.card')];
   const paths = [...$('ribbons').querySelectorAll('path')];
-  const adj = new Map();
+  const out = new Map(), into = new Map();
   for (const m of maps) {
-    for (const { a, b } of m.links) {
-      if (!adj.has(a)) adj.set(a, new Set());
-      if (!adj.has(b)) adj.set(b, new Set());
-      adj.get(a).add(b); adj.get(b).add(a);
+    for (const { from, to } of m.links) {
+      if (!out.has(from)) out.set(from, new Set());
+      if (!into.has(to)) into.set(to, new Set());
+      out.get(from).add(to); into.get(to).add(from);
     }
   }
   const clear = () => {
     cards.forEach(c => c.classList.remove('dim', 'hi'));
-    paths.forEach(p => { p.classList.remove('dim'); p.setAttribute('stroke', '#c3cad3'); });
+    paths.forEach(p => {
+      p.classList.remove('dim');
+      p.setAttribute('stroke', RIBBON_DIM);
+      p.setAttribute('stroke-width', '1.5');
+      p.setAttribute('marker-end', 'url(#arr-dim)');
+    });
   };
   for (const card of cards) {
+    const id = card.dataset.id;
     card.addEventListener('mouseenter', () => {
-      if (!adj.has(card.dataset.id)) return; // unconnected card: no path to trace
-      const seen = new Set([card.dataset.id]), queue = [card.dataset.id];
-      while (queue.length) {
-        for (const next of adj.get(queue.shift()) || []) {
-          if (!seen.has(next)) { seen.add(next); queue.push(next); }
-        }
-      }
+      if (!out.has(id) && !into.has(id)) return; // nothing connects here
+      const { nodes, edges } = tracePath(id, out, into);
       cards.forEach(c => {
-        c.classList.toggle('dim', !seen.has(c.dataset.id));
-        c.classList.toggle('hi', seen.has(c.dataset.id));
+        const on = nodes.has(c.dataset.id);
+        c.classList.toggle('dim', !on);
+        c.classList.toggle('hi', on);
       });
       paths.forEach(p => {
-        const on = seen.has(p.dataset.a) && seen.has(p.dataset.b);
+        const on = edges.has(p.dataset.from + ' ' + p.dataset.to);
         p.classList.toggle('dim', !on);
-        p.setAttribute('stroke', on ? '#7b8797' : '#c3cad3');
+        p.setAttribute('stroke', on ? RIBBON_HOT : RIBBON_DIM);
+        p.setAttribute('stroke-width', on ? '2.2' : '1.5');
+        p.setAttribute('marker-end', on ? 'url(#arr-hot)' : 'url(#arr-dim)');
       });
     });
     card.addEventListener('mouseleave', clear);
