@@ -41,6 +41,9 @@ type Inventory struct {
 	TerraformVersion string
 	Resources        []Resource
 	Plan             *tfjson.Plan // the raw plan, for graph building
+	// DOT is Terraform's own dependency graph for this plan. It resolves
+	// wiring that runs through locals, which plan JSON omits entirely.
+	DOT []byte
 }
 
 // Options are the plan inputs a real workspace usually needs: most are not
@@ -105,7 +108,13 @@ func Load(ctx context.Context, dir string, opts Options) (*Inventory, error) {
 		return nil, fmt.Errorf("terraform show failed: %w", err)
 	}
 
-	return fromPlan(plan), nil
+	inv := fromPlan(plan)
+	// Best effort: the diagram is still useful without it, so a failure here
+	// is not worth failing the whole load for.
+	if dot, err := tf.Graph(ctx, tfexec.GraphPlan(planFile)); err == nil {
+		inv.DOT = []byte(dot)
+	}
+	return inv, nil
 }
 
 func fromPlan(plan *tfjson.Plan) *Inventory {

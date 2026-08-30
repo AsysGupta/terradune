@@ -85,7 +85,7 @@ func run(ctx context.Context, dir string, port int, printOnly bool, opts ingest.
 				continue
 			}
 			inv.PrintSummary(os.Stdout)
-			graph.Build(inv.Plan).Print(os.Stdout)
+			graph.BuildWithDOT(inv.Plan, inv.DOT).Print(os.Stdout)
 		}
 		return nil
 	}
@@ -100,7 +100,7 @@ func run(ctx context.Context, dir string, port int, printOnly bool, opts ingest.
 			return
 		}
 		srv.SetGraph(ws.Name, ws.Dir, inv.TerraformVersion,
-			graph.Build(inv.Plan), graph.BuildDetails(inv.Plan))
+			graph.BuildWithDOT(inv.Plan, inv.DOT), graph.BuildDetails(inv.Plan))
 		log.Printf("%s: %d resources", ws.Name, len(inv.Resources))
 	}
 

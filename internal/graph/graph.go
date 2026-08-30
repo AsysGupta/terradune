@@ -63,6 +63,12 @@ func stripIndexes(addr string) string {
 // Build derives the graph from a plan. Only managed resources become nodes;
 // data sources and variables are followed as reference paths but not drawn.
 func Build(plan *tfjson.Plan) *Graph {
+	return BuildWithDOT(plan, nil)
+}
+
+// BuildWithDOT additionally consults Terraform's own dependency graph, which
+// resolves the wiring that runs through locals — invisible in plan JSON.
+func BuildWithDOT(plan *tfjson.Plan, dot []byte) *Graph {
 	g := &Graph{}
 
 	values := map[string]map[string]string{}
@@ -94,12 +100,19 @@ func Build(plan *tfjson.Plan) *Graph {
 	if plan.Config != nil && plan.Config.RootModule != nil {
 		r := &resolver{
 			modules:   map[string]*tfjson.ConfigModule{},
+			parents:   map[string]parentRef{},
+			data:      map[string]*tfjson.ConfigResource{},
 			instances: instances,
 			seen:      map[Edge]bool{},
+			cfgPairs:  map[string]bool{},
 			graph:     g,
 		}
 		r.indexModules(plan.Config.RootModule, "")
 		r.walkModule(plan.Config.RootModule, "")
+		if len(dot) > 0 {
+			isResource := func(addr string) bool { _, ok := instances[addr]; return ok }
+			r.applyDOTDeps(DependenciesFromDOT(dot, isResource))
+		}
 	}
 
 	sort.Slice(g.Nodes, func(i, j int) bool { return g.Nodes[i].ID < g.Nodes[j].ID })
@@ -173,17 +186,43 @@ func joinAddr(module, rest string) string {
 // resolver walks the configuration turning references into edges, following
 // module outputs through to the resources behind them.
 type resolver struct {
-	modules   map[string]*tfjson.ConfigModule // config module address -> module
-	instances map[string][]string             // resource config address -> instance addresses
+	modules   map[string]*tfjson.ConfigModule   // config module address -> module
+	parents   map[string]parentRef              // module address -> where it was called from
+	data      map[string]*tfjson.ConfigResource // data source config address -> config
+	instances map[string][]string               // resource config address -> instance addresses
 	seen      map[Edge]bool
+	cfgPairs  map[string]bool // config pairs already connected precisely
 	graph     *Graph
+}
+
+func (r *resolver) addEdge(from, to string) {
+	e := Edge{From: from, To: to}
+	if from == to || r.seen[e] {
+		return
+	}
+	r.seen[e] = true
+	r.graph.Edges = append(r.graph.Edges, e)
+}
+
+// parentRef is where a module was called from, so a var reference inside it
+// can be traced back to the argument the caller passed.
+type parentRef struct {
+	addr string // calling module's address
+	call string // name of the module call
 }
 
 func (r *resolver) indexModules(mod *tfjson.ConfigModule, moduleAddr string) {
 	r.modules[moduleAddr] = mod
+	for _, res := range mod.Resources {
+		if res.Mode == tfjson.DataResourceMode {
+			r.data[joinAddr(moduleAddr, "data."+res.Type+"."+res.Name)] = res
+		}
+	}
 	for name, call := range mod.ModuleCalls {
 		if call.Module != nil {
-			r.indexModules(call.Module, joinAddr(moduleAddr, "module."+name))
+			childAddr := joinAddr(moduleAddr, "module."+name)
+			r.parents[childAddr] = parentRef{addr: moduleAddr, call: name}
+			r.indexModules(call.Module, childAddr)
 		}
 	}
 }
@@ -244,11 +283,8 @@ func (r *resolver) walkModule(mod *tfjson.ConfigModule, moduleAddr string) {
 								continue
 							}
 						}
-						e := Edge{From: from, To: to}
-						if from != to && !r.seen[e] {
-							r.seen[e] = true
-							r.graph.Edges = append(r.graph.Edges, e)
-						}
+						r.addEdge(from, to)
+						r.cfgPairs[fromCfg+"|"+toCfg] = true
 					}
 				}
 			}
@@ -279,7 +315,62 @@ func (r *resolver) resolveRef(ref string, moduleAddr string, t *targets, visitin
 		return
 	}
 	switch parts[0] {
-	case "var", "local", "data", "each", "count", "path", "terraform", "self":
+	case "local", "each", "count", "path", "terraform", "self":
+		// Locals are absent from plan JSON entirely, so chains through them
+		// cannot be followed; the rest carry no resource dependency.
+		return
+	case "var":
+		// A variable inside a module is whatever its caller passed, so follow
+		// the reference up into the module call's argument.
+		p, ok := r.parents[moduleAddr]
+		if !ok {
+			return // a root variable: supplied by the user, not by a resource
+		}
+		key := "var|" + moduleAddr + "|" + parts[1]
+		if visiting[key] {
+			return
+		}
+		visiting[key] = true
+		parentMod, ok := r.modules[p.addr]
+		if !ok {
+			return
+		}
+		call, ok := parentMod.ModuleCalls[p.call]
+		if !ok || call.Expressions == nil {
+			return
+		}
+		arg, ok := call.Expressions[parts[1]]
+		if !ok {
+			return
+		}
+		argRefs := map[string]bool{}
+		collectRefs(arg, argRefs)
+		for argRef := range argRefs {
+			r.resolveRef(argRef, p.addr, t, visiting)
+		}
+		return
+	case "data":
+		// Data sources are not drawn, but resources reached through them are
+		// genuinely related, so resolve onward through the query's own inputs.
+		if len(parts) < 3 {
+			return
+		}
+		cfg := joinAddr(moduleAddr, "data."+parts[1]+"."+stripIndexes(parts[2]))
+		if visiting[cfg] {
+			return
+		}
+		visiting[cfg] = true
+		ds, ok := r.data[cfg]
+		if !ok {
+			return
+		}
+		dsRefs := map[string]bool{}
+		for _, expr := range ds.Expressions {
+			collectRefs(expr, dsRefs)
+		}
+		for dsRef := range dsRefs {
+			r.resolveRef(dsRef, moduleAddr, t, visiting)
+		}
 		return
 	case "module":
 		if len(parts) < 3 {

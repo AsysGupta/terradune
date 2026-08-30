@@ -146,6 +146,23 @@ check('the graph honours the same filter', function () {
   if (root.edges.length !== 0) throw new Error('edges survived an empty filter');
 });
 
+check('module for_each keys name their resources', function () {
+  var n = { id: 'module.rt["web-az1"].aws_route_table.rt[0]', type: 'aws_route_table',
+            name: 'rt', module: 'module.rt["web-az1"]', status: 'create' };
+  if (displayName(n) !== 'web-az1') {
+    throw new Error('got ' + displayName(n) + ', want the module key');
+  }
+  if (cardHTML(n).indexOf('rt[0]') === -1) {
+    throw new Error('resource name dropped from the card');
+  }
+  // A Name tag still wins, and an unkeyed resource keeps its own name.
+  var tagged = { id: 'aws_vpc.main', type: 'aws_vpc', name: 'main', module: '',
+                 status: 'create', meta: { name: 'prod-vpc' } };
+  if (displayName(tagged) !== 'prod-vpc') throw new Error('Name tag ignored');
+  var plain = { id: 'aws_eip.n[1]', type: 'aws_eip', name: 'n', module: '', status: 'create' };
+  if (displayName(plain) !== 'n[1]') throw new Error('got ' + displayName(plain));
+});
+
 check('clearing filters restores every card', function () {
   filter.text = '';
   filter.statuses = new Set();

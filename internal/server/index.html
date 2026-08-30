@@ -309,6 +309,24 @@ function iconSVG(type) {
 }
 
 const label = t => LABELS[t] || t.replace(/^aws_/, '').replace(/_/g, ' ');
+
+// moduleKey pulls the for_each key a module instance was created with:
+// module.route_table["web-az1"] -> "web-az1".
+function moduleKey(mod) {
+  const found = (mod || '').match(/\["([^"]+)"\]/g);
+  return found ? found[found.length - 1].slice(2, -2) : '';
+}
+
+// In modular code the resource name repeats across every copy — a dozen
+// route tables are all "rt[0]" — and the module's own key is what actually
+// names them, so it takes precedence over the resource name.
+function displayName(n) {
+  return n.meta?.name || moduleKey(n.module) || n.name + idx(n.id);
+}
+
+// shortRef is the address without its module path: the part that says which
+// resource this is once the module key is already the title.
+const shortRef = n => n.name + idx(n.id);
 const esc = t => String(t).replace(/[&<>"]/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const idx = a => (a.match(/\[[^\]]+\]$/) || [''])[0];
@@ -456,9 +474,12 @@ function renderChips(state) {
 let RENDER_WS = ''; // workspace whose cards are being emitted
 
 function cardHTML(n, detail, nested) {
-  const nice = n.meta?.name || n.name + idx(n.id);
-  const det = detail !== undefined && detail !== null ? detail
+  const nice = displayName(n);
+  let det = detail !== undefined && detail !== null ? detail
     : (n.meta?.cidr || n.meta?.spec || n.meta?.az || '');
+  // Keep the resource name visible when the title came from somewhere else,
+  // so two cards are never indistinguishable.
+  if (nice !== shortRef(n)) det = det ? det + ' · ' + shortRef(n) : shortRef(n);
   return `<div class="card ${n.status}" data-id="${esc(n.id)}" data-ws="${esc(RENDER_WS)}"
       title="${esc(n.id)}">
     <span class="ico">${iconSVG(n.type)}</span>
