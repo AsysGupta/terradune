@@ -4,14 +4,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/AsysGupta/terradune/internal/graph"
 	"github.com/AsysGupta/terradune/internal/ingest"
@@ -154,8 +157,18 @@ func run(ctx context.Context, dir string, port int, printOnly bool, opts ingest.
 	}()
 
 	addr := fmt.Sprintf("localhost:%d", port)
+	// Bind before announcing: otherwise a second terradune prints a serving
+	// banner it cannot honour, and the browser keeps talking to the first one.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if errors.Is(err, syscall.EADDRINUSE) {
+			return fmt.Errorf("port %d is already in use — another terradune may be running; "+
+				"stop it or choose another port with -port", port)
+		}
+		return err
+	}
 	log.Printf("terradune serving http://%s", addr)
-	return http.ListenAndServe(addr, srv.Handler())
+	return http.Serve(ln, srv.Handler())
 }
 
 func planAll(workspaces []ingest.Workspace, plan func(ingest.Workspace)) {
