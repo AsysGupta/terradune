@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>terradune</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --text: #e6e8eb; --muted: #8b929c;
+    --existing: #8b929c; --create: #4cc38a; --update: #e5b567;
+    --replace: #b18be8; --destroy: #e5734c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display: flex; align-items: center; gap: 12px;
+           padding: 12px 20px; background: var(--panel);
+           border-bottom: 1px solid #2a2e36; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #555; }
+  #dot.live { background: #4cc38a; }
+  #dot.busy { background: #e5b567; animation: pulse 1s infinite alternate; }
+  #dot.down { background: #e5734c; }
+  @keyframes pulse { to { opacity: .3; } }
+  #meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  #error { display: none; padding: 10px 20px; background: #3a1f1a;
+           color: #f0a08c; white-space: pre-wrap; font-size: 12px; }
+  main { padding: 20px; display: grid; gap: 20px;
+         grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  section h2 { font-size: 13px; color: var(--muted); text-transform: uppercase;
+               letter-spacing: .08em; margin: 0 0 8px; }
+  .module { background: var(--panel); border: 1px solid #2a2e36;
+            border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+  .module h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted);
+               font-weight: 600; }
+  .res { display: flex; gap: 10px; align-items: baseline; padding: 2px 0; }
+  .badge { font-size: 11px; width: 70px; flex: none; }
+  .existing { color: var(--existing); } .create { color: var(--create); }
+  .update { color: var(--update); } .replace { color: #b18be8; }
+  .destroy { color: var(--destroy); }
+  .destroy .addr { text-decoration: line-through; }
+  #edges div { color: var(--muted); padding: 2px 0; font-size: 12px;
+               overflow-wrap: anywhere; }
+  #edges b { color: var(--text); font-weight: 500; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div id="dot"></div>
+  <h1>terradune</h1>
+  <span id="meta"></span>
+</header>
+<div id="error"></div>
+<main>
+  <section><h2>Resources</h2><div id="modules"></div></section>
+  <section><h2>Dependencies</h2><div id="edges"></div></section>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const dot = $('dot');
+
+  function render(s) {
+    dot.className = s.rebuilding ? 'busy' : 'live';
+    $('meta').textContent = `terraform ${s.terraformVersion || '?'} · ` +
+      `${(s.nodes || []).length} resources · ${new Date(s.generatedAt).toLocaleTimeString()}`;
+    $('error').style.display = s.error ? 'block' : 'none';
+    $('error').textContent = s.error || '';
+    if (s.rebuilding) return; // keep current lists while a rebuild is in flight
+
+    const byModule = new Map();
+    for (const n of s.nodes || []) {
+      const key = n.module || 'root';
+      if (!byModule.has(key)) byModule.set(key, []);
+      byModule.get(key).push(n);
+    }
+    $('modules').innerHTML = [...byModule.entries()].map(([mod, nodes]) => `
+      <div class="module"><h3>${esc(mod)}</h3>
+        ${nodes.map(n => `<div class="res ${n.status}">
+            <span class="badge">${n.status}</span>
+            <span class="addr">${esc(n.id)}</span>
+          </div>`).join('')}
+      </div>`).join('');
+
+    $('edges').innerHTML = (s.edges || []).map(e =>
+      `<div><b>${esc(e.from)}</b> → ${esc(e.to)}</div>`).join('')
+      || '<div>none</div>';
+  }
+
+  function esc(t) {
+    return String(t).replace(/[&<>"]/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  const es = new EventSource('/events');
+  es.onmessage = e => render(JSON.parse(e.data));
+  es.onerror = () => { dot.className = 'down'; };
+</script>
+</body>
+</html>

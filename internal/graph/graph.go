@@ -17,23 +17,23 @@ import (
 
 // Node is one resource instance in the diagram.
 type Node struct {
-	ID     string // full instance address, e.g. module.vpc.aws_subnet.a[0]
-	Type   string // e.g. aws_subnet
-	Name   string
-	Module string // containing module address, "" for root
-	Status ingest.Status
+	ID     string        `json:"id"`   // full instance address, e.g. module.vpc.aws_subnet.a[0]
+	Type   string        `json:"type"` // e.g. aws_subnet
+	Name   string        `json:"name"`
+	Module string        `json:"module"` // containing module address, "" for root
+	Status ingest.Status `json:"status"`
 }
 
 // Edge means From depends on To.
 type Edge struct {
-	From string
-	To   string
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // Graph is what the diagram renders.
 type Graph struct {
-	Nodes []Node
-	Edges []Edge
+	Nodes []Node `json:"nodes"`
+	Edges []Edge `json:"edges"`
 }
 
 var indexRe = regexp.MustCompile(`\[[^\]]*\]`)
