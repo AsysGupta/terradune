@@ -268,6 +268,38 @@ check('a ribbon runs from the vpc to its subnet, not the reverse', function () {
   if (reversed) throw new Error('ribbon drawn subnet -> vpc');
 });
 
+check('everything shown inside a VPC panel is joined to that VPC', function () {
+  filter.text = ''; filter.statuses = new Set();
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    var ws = STATE.workspaces[i];
+    var m = buildMap(ws);
+    var out = {};
+    for (var k = 0; k < m.links.length; k++) {
+      (out[m.links[k].from] = out[m.links[k].from] || {})[m.links[k].to] = true;
+    }
+    for (var p = 0; p < m.panels.length; p++) {
+      var panel = m.panels[p];
+      var inside = panel.subnets.concat(panel.routeTables, panel.gateways);
+      for (var n = 0; n < inside.length; n++) {
+        if (!(out[panel.vpc.id] || {})[inside[n].id]) {
+          throw new Error(ws.name + ': ' + inside[n].id + ' sits in the panel unjoined');
+        }
+      }
+    }
+  }
+});
+
+check('links are not duplicated', function () {
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    var m = buildMap(STATE.workspaces[i]), seen = {};
+    for (var k = 0; k < m.links.length; k++) {
+      var key = m.links[k].from + ' ' + m.links[k].to;
+      if (seen[key]) throw new Error('duplicate link ' + key);
+      seen[key] = true;
+    }
+  }
+});
+
 check('clearing filters restores every card', function () {
   filter.text = '';
   filter.statuses = new Set();

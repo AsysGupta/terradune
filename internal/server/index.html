@@ -74,8 +74,12 @@
   #clear[hidden] { display: none; }
 
   #map { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px 40px; position: relative; }
-  #ribbons { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
-  #mapbody { position: relative; }
+  /* The ribbons sit above the panels: the panels are opaque, so an SVG
+     underneath them is invisible. Sized from the scrollable content rather
+     than pinned with inset, which would clip everything below the fold. */
+  #ribbons { position: absolute; top: 0; left: 0; z-index: 3;
+             pointer-events: none; overflow: visible; }
+  #mapbody { position: relative; z-index: 1; }
 
   .ws { margin-bottom: 26px; }
   .ws-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
@@ -415,13 +419,29 @@ function buildMap(ws) {
       } else p.inVpc.push(n);
     }
   }
+  // Anything drawn inside a VPC's panel is joined to it. Terraform's graph is
+  // transitively reduced, so a route table's link to its VPC is often hidden
+  // behind an intervening resource; without this the panel would show a
+  // containment the ribbons then contradict.
+  for (const p of panels) {
+    for (const n of [...p.subnets, ...p.routeTables, ...p.gateways]) add(p.vpc.id, n.id);
+  }
+
   const bySort = (a, b) => a.id.localeCompare(b.id);
   for (const p of panels) {
     p.subnets.sort(bySort); p.routeTables.sort(bySort);
     p.gateways.sort(bySort); p.inVpc.sort(bySort);
   }
   others.sort(bySort);
-  return { panels, others, links, nodes, subnetPublic };
+
+  const seenLink = new Set();
+  const unique = links.filter(l => {
+    const key = l.from + ' ' + l.to;
+    if (seenLink.has(key)) return false;
+    seenLink.add(key);
+    return true;
+  });
+  return { panels, others, links: unique, nodes, subnetPublic };
 }
 
 // ---------- render map --------------------------------------------------

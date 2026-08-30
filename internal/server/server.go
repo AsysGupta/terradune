@@ -121,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// The page changes whenever terradune is rebuilt, and a cached copy
+		// looks exactly like a broken feature.
+		w.Header().Set("Cache-Control", "no-store")
 		page, _ := static.ReadFile("index.html")
 		w.Write(page)
 	})
