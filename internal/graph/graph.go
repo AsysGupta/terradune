@@ -22,6 +22,9 @@ type Node struct {
 	Name   string        `json:"name"`
 	Module string        `json:"module"` // containing module address, "" for root
 	Status ingest.Status `json:"status"`
+	// Meta carries a few attribute values the UI lays out by (az, cidr,
+	// name tag, and ids for matching resources that lack config edges).
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // Edge means From depends on To.
@@ -62,6 +65,14 @@ func stripIndexes(addr string) string {
 func Build(plan *tfjson.Plan) *Graph {
 	g := &Graph{}
 
+	values := map[string]map[string]string{}
+	if plan.PriorState != nil && plan.PriorState.Values != nil {
+		collectValues(plan.PriorState.Values.RootModule, values)
+	}
+	if plan.PlannedValues != nil {
+		collectValues(plan.PlannedValues.RootModule, values)
+	}
+
 	// Config address -> all live instance addresses of that resource.
 	instances := map[string][]string{}
 	for _, rc := range plan.ResourceChanges {
@@ -74,6 +85,7 @@ func Build(plan *tfjson.Plan) *Graph {
 			Name:   rc.Name,
 			Module: rc.ModuleAddress,
 			Status: statusOf(rc.Change.Actions),
+			Meta:   values[rc.Address],
 		})
 		cfgAddr := joinAddr(stripIndexes(rc.ModuleAddress), rc.Type+"."+rc.Name)
 		instances[cfgAddr] = append(instances[cfgAddr], rc.Address)
@@ -98,6 +110,40 @@ func Build(plan *tfjson.Plan) *Graph {
 		return g.Edges[i].To < g.Edges[j].To
 	})
 	return g
+}
+
+// metaKeys maps attribute names to the shorter keys sent to the UI.
+var metaKeys = map[string]string{
+	"id":                "id",
+	"availability_zone": "az",
+	"cidr_block":        "cidr",
+	"vpc_id":            "vpc_id",
+	"subnet_id":         "subnet_id",
+}
+
+func collectValues(mod *tfjson.StateModule, out map[string]map[string]string) {
+	if mod == nil {
+		return
+	}
+	for _, res := range mod.Resources {
+		m := map[string]string{}
+		for attr, key := range metaKeys {
+			if v, ok := res.AttributeValues[attr].(string); ok && v != "" {
+				m[key] = v
+			}
+		}
+		if tags, ok := res.AttributeValues["tags"].(map[string]interface{}); ok {
+			if name, ok := tags["Name"].(string); ok && name != "" {
+				m["name"] = name
+			}
+		}
+		if len(m) > 0 {
+			out[res.Address] = m
+		}
+	}
+	for _, child := range mod.ChildModules {
+		collectValues(child, out)
+	}
 }
 
 func statusOf(actions tfjson.Actions) ingest.Status {

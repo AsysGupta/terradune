@@ -12,7 +12,7 @@ import (
 	"github.com/AsysGupta/terradune/internal/graph"
 )
 
-//go:embed index.html
+//go:embed index.html assets
 var static embed.FS
 
 // State is what the browser renders. On a failed rebuild the previous good
@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 		page, _ := static.ReadFile("index.html")
 		w.Write(page)
 	})
+	mux.Handle("/assets/", http.FileServer(http.FS(static)))
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		payload := s.current
