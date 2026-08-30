@@ -71,6 +71,7 @@ func Build(plan *tfjson.Plan) *Graph {
 func BuildWithDOT(plan *tfjson.Plan, dot []byte) *Graph {
 	g := &Graph{}
 
+	region := planRegion(plan)
 	values := map[string]map[string]string{}
 	if plan.PriorState != nil && plan.PriorState.Values != nil {
 		collectValues(plan.PriorState.Values.RootModule, values)
@@ -91,7 +92,7 @@ func BuildWithDOT(plan *tfjson.Plan, dot []byte) *Graph {
 			Name:   rc.Name,
 			Module: rc.ModuleAddress,
 			Status: statusOf(rc.Change.Actions),
-			Meta:   routeMeta(rc, values[rc.Address]),
+			Meta:   scopeMeta(rc, region, routeMeta(rc, values[rc.Address])),
 		})
 		cfgAddr := joinAddr(stripIndexes(rc.ModuleAddress), rc.Type+"."+rc.Name)
 		instances[cfgAddr] = append(instances[cfgAddr], rc.Address)
@@ -123,6 +124,89 @@ func BuildWithDOT(plan *tfjson.Plan, dot []byte) *Graph {
 		return g.Edges[i].To < g.Edges[j].To
 	})
 	return g
+}
+
+// accountScoped are resource types that do not live in a region, let alone a
+// VPC: they belong to the account as a whole.
+var accountScoped = []string{
+	"aws_iam_", "aws_organizations_", "aws_route53_zone", "aws_route53_record",
+	"aws_route53_delegation_set", "aws_cloudfront_", "aws_globalaccelerator_",
+	"aws_account_", "aws_servicequotas_",
+}
+
+// vpcScoped are types that cannot exist outside a VPC. This is a fact about
+// the resource rather than a guess: a route table is in a VPC by definition,
+// even when the plan cannot yet say which one because the VPC is being
+// created in the same run.
+var vpcScoped = map[string]bool{
+	"aws_subnet": true, "aws_route_table": true, "aws_route": true,
+	"aws_route_table_association": true, "aws_main_route_table_association": true,
+	"aws_internet_gateway": true, "aws_egress_only_internet_gateway": true,
+	"aws_nat_gateway": true, "aws_security_group": true, "aws_security_group_rule": true,
+	"aws_network_acl": true, "aws_network_acl_rule": true, "aws_network_interface": true,
+	"aws_network_interface_attachment": true, "aws_network_interface_sg_attachment": true,
+	"aws_vpc_endpoint": true, "aws_vpc_peering_connection": true, "aws_vpn_gateway": true,
+	"aws_ec2_transit_gateway_vpc_attachment": true, "aws_transit_gateway_vpc_attachment": true,
+	"aws_db_subnet_group": true, "aws_elasticache_subnet_group": true,
+	"aws_lb": true, "aws_lb_target_group": true, "aws_lb_listener": true,
+	"aws_instance": true, "aws_default_security_group": true,
+	"aws_default_route_table": true, "aws_default_network_acl": true,
+}
+
+// shortProvider turns registry.terraform.io/hashicorp/aws into "aws".
+func shortProvider(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
+
+// scopeOf places a resource in the widest thing that certainly contains it.
+// Types that can be in a VPC but need not be — a Lambda, which is in one only
+// when it has a vpc_config — are left to the region here; whether they reach
+// a VPC is then decided from what they actually reference.
+func scopeOf(resourceType, provider string) string {
+	if provider != "aws" {
+		return "external"
+	}
+	for _, prefix := range accountScoped {
+		if strings.HasPrefix(resourceType, prefix) {
+			return "account"
+		}
+	}
+	if vpcScoped[resourceType] {
+		return "vpc"
+	}
+	return "region"
+}
+
+// planRegion resolves the region the aws provider is configured with, whether
+// it is written literally or passed in as a variable.
+func planRegion(plan *tfjson.Plan) string {
+	if plan.Config == nil || plan.Config.ProviderConfigs == nil {
+		return ""
+	}
+	for _, pc := range plan.Config.ProviderConfigs {
+		if shortProvider(pc.Name) != "aws" || pc.Expressions == nil {
+			continue
+		}
+		expr, ok := pc.Expressions["region"]
+		if !ok || expr == nil {
+			continue
+		}
+		if s, ok := expr.ConstantValue.(string); ok && s != "" {
+			return s
+		}
+		for _, ref := range expr.References {
+			name := strings.TrimPrefix(ref, "var.")
+			if v, ok := plan.Variables[name]; ok && v != nil {
+				if s, ok := v.Value.(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // routeTargetAttrs are the mutually exclusive ways a route names its next
@@ -165,6 +249,21 @@ func routeMeta(rc *tfjson.ResourceChange, meta map[string]string) map[string]str
 			meta["destination"] = dst
 		}
 		break
+	}
+	return meta
+}
+
+// scopeMeta records where a resource lives, so the page can stop implying
+// that an IAM role or an SSM parameter sits inside a VPC.
+func scopeMeta(rc *tfjson.ResourceChange, region string, meta map[string]string) map[string]string {
+	provider := shortProvider(rc.ProviderName)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	meta["provider"] = provider
+	meta["scope"] = scopeOf(rc.Type, provider)
+	if provider == "aws" && region != "" {
+		meta["region"] = region
 	}
 	return meta
 }

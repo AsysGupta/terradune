@@ -467,6 +467,10 @@ function buildMap(ws) {
   }
 
   const vpcs = [...nodes.values()].filter(n => n.type === 'aws_vpc');
+  // A resource belongs to a VPC when it reaches one — directly, or through
+  // something that does, which is how a Lambda with a vpc_config gets there
+  // via its subnets. Assuming the only VPC in the workspace would put IAM
+  // roles and SSM parameters inside a network they have nothing to do with.
   const vpcOf = id => {
     const direct = depsOfType(id, m => m.type === 'aws_vpc');
     if (direct.length) return direct[0];
@@ -474,7 +478,11 @@ function buildMap(ws) {
       const up = depsOfType(d, m => m.type === 'aws_vpc');
       if (up.length) return up[0];
     }
-    return vpcs.length === 1 ? vpcs[0].id : null;
+    // A type that cannot exist outside a VPC is in one even when the plan
+    // cannot yet name it, so with a single VPC present there is no doubt
+    // which. This says nothing about resources that merely could be in a VPC.
+    if (nodes.get(id)?.meta?.scope === 'vpc' && vpcs.length === 1) return vpcs[0].id;
+    return null;
   };
 
   const panels = vpcs.map(v => ({ vpc: v, subnets: [], routeTables: [],
@@ -519,12 +527,18 @@ function buildMap(ws) {
     }
   }
 
+  // What is not in a VPC still lives somewhere: an SSM parameter belongs to
+  // the region, an IAM role to the account, a random password to neither.
+  const scopes = { region: [], account: [], external: [] };
+  for (const n of others) (scopes[n.meta?.scope] || scopes.external).push(n);
+
   const bySort = (a, b) => a.id.localeCompare(b.id);
   for (const p of panels) {
     p.subnets.sort(bySort); p.routeTables.sort(bySort);
     p.gateways.sort(bySort); p.inVpc.sort(bySort);
   }
   others.sort(bySort);
+  for (const list of Object.values(scopes)) list.sort(bySort);
 
   const byPair = new Map();
   for (const l of links) {
@@ -534,7 +548,8 @@ function buildMap(ws) {
     else if (l.flow) prev.flow = true; // a pair that is ever a hop stays one
   }
   const unique = [...byPair.values()];
-  return { panels, others, links: unique, nodes, subnetPublic };
+  const region = [...nodes.values()].find(n => n.meta?.region)?.meta.region || '';
+  return { panels, others, scopes, region, links: unique, nodes, subnetPublic };
 }
 
 // ---------- render map --------------------------------------------------
@@ -714,11 +729,21 @@ function renderMap(state) {
       </div>`;
     const err = ws.error ? `<div class="ws-err">${esc(ws.error)}</div>` : '';
     let inner = m.panels.map(p => panelHTML(p, m, vis)).join('');
-    const others = m.others.filter(n => vis.has(n.id));
-    if (others.length) inner += `<div class="others">
-        <h3>Other resources <span>(${others.length})</span></h3>
-        ${groupedHTML(others)}
-      </div>`;
+    // Sections widen outwards: the VPC panels, then the region around them,
+    // then the account, then what is not AWS at all.
+    const sections = [
+      ['region', m.region ? `Elsewhere in ${m.region}` : 'Elsewhere in the region'],
+      ['account', 'Account-wide'],
+      ['external', 'Outside AWS'],
+    ];
+    for (const [key, title] of sections) {
+      const list = (m.scopes[key] || []).filter(n => vis.has(n.id));
+      if (!list.length) continue;
+      inner += `<div class="others">
+          <h3>${esc(title)} <span>(${list.length})</span></h3>
+          ${groupedHTML(list)}
+        </div>`;
+    }
     if (!inner && !err) {
       inner = `<div class="empty">${(ws.nodes || []).length && filterActive()
         ? 'Nothing here matches the current filter.' : 'No resources in this plan.'}</div>`;

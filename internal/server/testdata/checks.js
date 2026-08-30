@@ -447,6 +447,51 @@ check('categories flow across the width', function () {
   }
 });
 
+check('a resource is only in a VPC when it reaches one', function () {
+  filter.text = ''; filter.statuses = new Set();
+  var simple = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'ec2') simple = STATE.workspaces[i];
+  }
+  var m = buildMap(simple);
+  // Everything placed in a panel must actually reach the VPC.
+  var deps = {};
+  for (var e = 0; e < simple.edges.length; e++) {
+    (deps[simple.edges[e].from] = deps[simple.edges[e].from] || []).push(simple.edges[e].to);
+  }
+  var byId = {};
+  for (var j = 0; j < simple.nodes.length; j++) byId[simple.nodes[j].id] = simple.nodes[j];
+  m.panels.forEach(function (p) {
+    p.inVpc.concat(p.subnets, p.routeTables, p.gateways).forEach(function (n) {
+      if (n.meta && n.meta.scope === 'vpc') return; // in one by definition
+      var reaches = (deps[n.id] || []).some(function (d) {
+        return byId[d] && (byId[d].type === 'aws_vpc' ||
+          (deps[d] || []).some(function (dd) { return byId[dd] && byId[dd].type === 'aws_vpc'; }));
+      });
+      if (!reaches) throw new Error(n.id + ' was placed in a VPC it does not reach');
+    });
+  });
+});
+
+check('resources outside a VPC are filed by their real scope', function () {
+  renderMap(STATE);
+  var h = __sinks['mapbody'] || '';
+  // The simple workspace is random_pet and local_file: neither is AWS.
+  if (h.indexOf('Outside AWS') === -1) {
+    throw new Error('non-AWS resources were not filed outside AWS');
+  }
+  // Scope comes from the plan, not from a guess about the type.
+  var kinds = {};
+  STATE.workspaces.forEach(function (ws) {
+    ws.nodes.forEach(function (n) { kinds[n.type] = n.meta && n.meta.scope; });
+  });
+  if (kinds['random_pet'] !== 'external') throw new Error('random_pet is not external');
+  // A subnet cannot exist outside a VPC; an SSM parameter or an EIP can.
+  if (kinds['aws_subnet'] !== 'vpc') throw new Error('aws_subnet is not vpc-scoped');
+  if (kinds['aws_route_table'] !== 'vpc') throw new Error('aws_route_table is not vpc-scoped');
+  if (kinds['aws_eip'] !== 'region') throw new Error('aws_eip is not region-scoped');
+});
+
 check('links are not duplicated', function () {
   for (var i = 0; i < STATE.workspaces.length; i++) {
     var m = buildMap(STATE.workspaces[i]), seen = {};
