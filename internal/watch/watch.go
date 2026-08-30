@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -27,9 +28,9 @@ func skipDir(name string) bool {
 }
 
 // Watch observes *.tf/*.tfvars files under root (recursively) and calls
-// onChange after edits settle for a debounce interval. Blocks until ctx is
-// cancelled.
-func Watch(ctx context.Context, root string, onChange func()) error {
+// onChange with the changed paths after edits settle for a debounce interval.
+// Blocks until ctx is cancelled.
+func Watch(ctx context.Context, root string, onChange func(paths []string)) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -52,12 +53,28 @@ func Watch(ctx context.Context, root string, onChange func()) error {
 	}
 	addTree(root)
 
-	var timer *time.Timer
-	fire := func() {
+	var (
+		timer   *time.Timer
+		mu      sync.Mutex
+		pending = map[string]bool{}
+	)
+	fire := func(path string) {
+		mu.Lock()
+		pending[path] = true
+		mu.Unlock()
 		if timer != nil {
 			timer.Stop()
 		}
-		timer = time.AfterFunc(debounce, onChange)
+		timer = time.AfterFunc(debounce, func() {
+			mu.Lock()
+			paths := make([]string, 0, len(pending))
+			for p := range pending {
+				paths = append(paths, p)
+			}
+			pending = map[string]bool{}
+			mu.Unlock()
+			onChange(paths)
+		})
 	}
 	defer func() {
 		if timer != nil {
@@ -80,7 +97,7 @@ func Watch(ctx context.Context, root string, onChange func()) error {
 				}
 			}
 			if isRelevant(ev.Name) {
-				fire()
+				fire(ev.Name)
 			}
 		case <-w.Errors:
 			// Non-fatal; keep watching.

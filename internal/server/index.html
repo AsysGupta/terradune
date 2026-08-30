@@ -5,92 +5,122 @@
 <title>terradune</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  @font-face {
+    font-family: 'Cantarell'; font-style: normal; font-weight: 400;
+    font-display: swap; src: url('/assets/fonts/cantarell-400.woff2') format('woff2');
+  }
+  @font-face {
+    font-family: 'Cantarell'; font-style: normal; font-weight: 700;
+    font-display: swap; src: url('/assets/fonts/cantarell-700.woff2') format('woff2');
+  }
   :root {
-    --bg: #14161a; --panel: #1d2026; --card: #21252c; --line: #2a2e36;
-    --text: #e6e8eb; --muted: #8b929c;
-    --existing: #4a9eda; --create: #4cc38a; --destroy: #e0524c;
-    --update: #e5b567; --replace: #e08a3c;
+    --bg: #f5f7f9; --surface: #ffffff; --sunken: #eef1f4;
+    --line: #dde2e8; --line-soft: #e8ecf1;
+    --text: #1b2027; --muted: #667080; --faint: #929cab;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --create-bg: #e4f7ec;  --create-bd: #35a06b;  --create-fg: #12673e;
+    --existing-bg: #e7f1fd; --existing-bd: #4a8fd4; --existing-fg: #17548f;
+    --update-bg: #fdf3e0;  --update-bd: #d09826;  --update-fg: #825b06;
+    --replace-bg: #fdeee0; --replace-bd: #d47f2e; --replace-fg: #8c4f16;
+    --destroy-bg: #fdeceb; --destroy-bd: #d4534e; --destroy-fg: #9d2a25;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+         font: 13.5px/1.5 'Cantarell', ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
          display: flex; flex-direction: column; }
+
   header { display: flex; align-items: center; gap: 14px; flex: none;
-           padding: 10px 20px; background: var(--panel);
+           padding: 10px 20px; background: var(--surface);
            border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .01em; }
-  #dot { width: 9px; height: 9px; border-radius: 50%; background: #555; flex: none; }
-  #dot.live { background: var(--create); }
-  #dot.busy { background: var(--update); animation: pulse 1s infinite alternate; }
-  #dot.down { background: var(--destroy); }
-  @keyframes pulse { to { opacity: .3; } }
-  .tabs { display: flex; gap: 4px; margin-left: 10px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 700; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+  #dot.live { background: var(--create-bd); }
+  #dot.busy { background: var(--update-bd); animation: pulse 1s infinite alternate; }
+  #dot.down { background: var(--destroy-bd); }
+  @keyframes pulse { to { opacity: .25; } }
+  .tabs { display: flex; gap: 4px; margin-left: 6px; }
   .tabs button { background: none; border: 1px solid transparent; color: var(--muted);
-                 font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 6px;
+                 font: inherit; font-size: 12.5px; padding: 4px 12px; border-radius: 6px;
                  cursor: pointer; }
-  .tabs button.on { background: var(--card); color: var(--text); border-color: var(--line); }
-  #meta { color: var(--muted); font-size: 12px; margin-left: auto;
-          font-family: ui-monospace, Menlo, monospace; }
-  #error { display: none; flex: none; padding: 10px 20px; background: #3a1f1a;
-           color: #f0a08c; white-space: pre-wrap; font-size: 12px;
-           font-family: ui-monospace, Menlo, monospace; }
+  .tabs button:hover { background: var(--sunken); }
+  .tabs button.on { background: var(--sunken); color: var(--text); border-color: var(--line); }
+  #meta { color: var(--muted); font-size: 12px; margin-left: auto; font-family: var(--mono); }
 
-  #map { flex: 1; min-height: 0; overflow: auto; padding: 20px; position: relative; }
+  #map { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px 40px; position: relative; }
   #ribbons { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
-  .vpc-panel { position: relative; border: 1px solid var(--line); border-radius: 10px;
-               background: #171a1f; margin-bottom: 24px; }
-  .vpc-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
-              border-bottom: 1px solid var(--line); }
-  .vpc-head .title { font-weight: 600; }
-  .vpc-head .sub { color: var(--muted); font-family: ui-monospace, Menlo, monospace;
-                   font-size: 12px; }
-  .cols { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr));
-          gap: 0; position: relative; }
-  .col { padding: 14px 16px 18px; border-right: 1px solid var(--line);
-         min-width: 0; }
+  #mapbody { position: relative; }
+
+  .ws { margin-bottom: 26px; }
+  .ws-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .ws-head h2 { margin: 0; font-size: 14px; font-weight: 700; font-family: var(--mono); }
+  .ws-head .sub { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .ws-head .spin { color: var(--update-fg); font-size: 12px; }
+  .ws-err { background: var(--destroy-bg); border: 1px solid var(--destroy-bd);
+            color: var(--destroy-fg); border-radius: 8px; padding: 9px 12px;
+            font: 11.5px/1.5 var(--mono); white-space: pre-wrap; margin-bottom: 10px;
+            max-height: 160px; overflow: auto; }
+
+  .vpc-panel { border: 1px solid var(--line); border-radius: 10px;
+               background: var(--surface); margin-bottom: 12px; overflow: hidden; }
+  .vpc-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+              border-bottom: 1px solid var(--line-soft); background: var(--sunken); }
+  .vpc-head .title { font-weight: 700; }
+  .vpc-head .sub { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .cols { display: grid; grid-template-columns: repeat(4, minmax(190px, 1fr)); }
+  .col { padding: 12px 14px 16px; border-right: 1px solid var(--line-soft); min-width: 0; }
   .col:last-child { border-right: none; }
-  .col > h3 { margin: 0 0 12px; font-size: 11px; color: var(--muted);
-              text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
-  .col > h3 span { color: #626a75; font-weight: 400; text-transform: none;
-                   letter-spacing: 0; }
-  .az { margin-bottom: 14px; }
-  .az > h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted);
-             font-weight: 500; font-family: ui-monospace, Menlo, monospace; }
-  .card { background: var(--card); border: 1px solid var(--line);
-          border-left: 3px solid var(--muted); border-radius: 6px;
-          padding: 7px 10px; margin-bottom: 8px; cursor: default;
-          transition: opacity .12s, border-color .12s, background .12s; }
+  .col > h3, .others h3 { margin: 0 0 10px; font-size: 10.5px; color: var(--muted);
+              text-transform: uppercase; letter-spacing: .07em; font-weight: 700; }
+  .col > h3 span, .others h3 span { color: var(--faint); font-weight: 400; }
+  .az { margin-bottom: 12px; }
+  .az > h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted); font-weight: 400;
+             font-family: var(--mono); }
+
+  .card { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px;
+          padding: 6px 9px; margin-bottom: 7px; background: var(--surface);
+          transition: opacity .12s, box-shadow .12s; }
   .card:last-child { margin-bottom: 0; }
-  .card .n { font-weight: 500; overflow-wrap: anywhere; }
-  .card .d { color: var(--muted); font-size: 11px;
-             font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
-  .card .s { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-  .card.hi { background: #2b313a; }
-  .dim { opacity: .18; }
-  .empty { color: #545b66; font-size: 12px; font-style: italic; }
-  .others { border: 1px solid var(--line); border-radius: 10px; background: #171a1f;
-            padding: 14px 16px; }
-  .others h3 { margin: 0 0 12px; font-size: 11px; color: var(--muted);
-               text-transform: uppercase; letter-spacing: .08em; }
-  .others .grid { display: grid; gap: 8px;
-                  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .card .n { font-weight: 700; overflow-wrap: anywhere; font-size: 12.5px; }
+  .card .d { color: var(--muted); font-size: 11px; font-family: var(--mono);
+             overflow-wrap: anywhere; display: flex; gap: 6px; }
+  .card .d .st { margin-left: auto; font-weight: 700; white-space: nowrap; }
+  .card.create   { background: var(--create-bg);   border-color: var(--create-bd);   color: var(--create-fg); }
+  .card.existing { background: var(--existing-bg); border-color: var(--existing-bd); color: var(--existing-fg); }
+  .card.update   { background: var(--update-bg);   border-color: var(--update-bd);   color: var(--update-fg); }
+  .card.replace  { background: var(--replace-bg);  border-color: var(--replace-bd);  color: var(--replace-fg); }
+  .card.destroy  { background: var(--destroy-bg);  border-color: var(--destroy-bd);  color: var(--destroy-fg); }
+  .card.destroy .n { text-decoration: line-through; }
+  .card .d { color: inherit; opacity: .75; }
+  .card.hi { box-shadow: 0 0 0 2px rgba(30,40,60,.22); }
+  .dim { opacity: .2; }
+  .contents { margin: 6px 0 0 10px; padding-left: 8px; border-left: 1px dashed currentColor; }
+  .contents .card { margin-bottom: 5px; padding: 4px 8px; }
+  .contents .card .n { font-size: 11.5px; }
 
-  #graph { flex: 1; min-height: 0; display: none; cursor: grab; }
+  .empty { color: var(--faint); font-size: 12px; font-style: italic; }
+  .others { border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+            padding: 12px 14px; margin-bottom: 12px; }
+  .others .grid { display: grid; gap: 7px;
+                  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
+  .hint { color: var(--faint); font-size: 11px; margin: 6px 2px 0; }
+
+  #graph { flex: 1; min-height: 0; display: none; cursor: grab; background: var(--bg); }
   #graph.panning { cursor: grabbing; }
-  .node-box { fill: var(--card); stroke-width: 2; }
-  .node-type { font: 600 12px ui-monospace, Menlo, monospace; }
-  .node-name { font: 11px ui-monospace, Menlo, monospace; fill: var(--muted); }
-  .module-box { fill: none; stroke: var(--muted); stroke-dasharray: 6 4;
-                stroke-width: 1; opacity: .7; }
-  .module-label { font: 600 11px ui-monospace, Menlo, monospace; fill: var(--muted); }
-  .edge { fill: none; stroke: #566070; stroke-width: 1.3; opacity: .8; }
+  .node-box { fill: var(--surface); stroke-width: 2; }
+  .node-type { font: 700 12px var(--mono); }
+  .node-name { font: 11px var(--mono); fill: var(--muted); }
+  .module-box { fill: none; stroke: var(--faint); stroke-dasharray: 6 4; stroke-width: 1; }
+  .module-label { font: 700 11px var(--mono); fill: var(--muted); }
+  .edge { fill: none; stroke: #a9b3c0; stroke-width: 1.3; }
 
-  #legend { position: fixed; right: 16px; bottom: 16px; background: var(--panel);
-            border: 1px solid var(--line); border-radius: 8px; padding: 9px 13px;
-            font-size: 11px; z-index: 5; }
-  #legend div { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
-  #legend i { width: 20px; height: 3px; border-radius: 2px; flex: none; }
+  #legend { position: fixed; right: 16px; bottom: 16px; background: var(--surface);
+            border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px;
+            font-size: 11px; z-index: 5; box-shadow: 0 2px 10px rgba(20,30,50,.07); }
+  #legend div { display: flex; align-items: center; gap: 8px; padding: 1.5px 0; }
+  #legend i { width: 22px; height: 12px; border-radius: 3px; flex: none;
+              border: 1px solid; border-left-width: 4px; }
 </style>
 </head>
 <body>
@@ -103,38 +133,43 @@
   </div>
   <span id="meta"></span>
 </header>
-<div id="error"></div>
 <div id="map"><svg id="ribbons"></svg><div id="mapbody"></div></div>
 <svg id="graph"></svg>
 <div id="legend">
-  <div><i style="background:#4cc38a"></i> will be created</div>
-  <div><i style="background:#4a9eda"></i> already exists</div>
-  <div><i style="background:#e5b567"></i> will change</div>
-  <div><i style="background:#e08a3c"></i> will be replaced</div>
-  <div><i style="background:#e0524c"></i> will be destroyed</div>
+  <div><i style="background:var(--create-bg);border-color:var(--create-bd)"></i> will be created</div>
+  <div><i style="background:var(--existing-bg);border-color:var(--existing-bd)"></i> already exists</div>
+  <div><i style="background:var(--update-bg);border-color:var(--update-bd)"></i> will change</div>
+  <div><i style="background:var(--replace-bg);border-color:var(--replace-bd)"></i> will be replaced</div>
+  <div><i style="background:var(--destroy-bg);border-color:var(--destroy-bd)"></i> will be destroyed</div>
 </div>
 
 <script src="/assets/elk.bundled.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
-const COLORS = { existing: '#4a9eda', create: '#4cc38a', update: '#e5b567',
-                 replace: '#e08a3c', destroy: '#e0524c' };
+const GRAPH_COLORS = { existing: '#4a8fd4', create: '#35a06b', update: '#d09826',
+                       replace: '#d47f2e', destroy: '#d4534e' };
 const LABELS = {
   aws_vpc: 'VPC', aws_subnet: 'Subnet', aws_route_table: 'Route table',
   aws_route: 'Route', aws_route_table_association: 'Association',
   aws_internet_gateway: 'Internet gateway', aws_nat_gateway: 'NAT gateway',
-  aws_egress_only_internet_gateway: 'Egress-only IGW',
-  aws_vpn_gateway: 'VPN gateway', aws_vpc_peering_connection: 'Peering connection',
+  aws_egress_only_internet_gateway: 'Egress-only IGW', aws_vpn_gateway: 'VPN gateway',
+  aws_vpc_peering_connection: 'Peering connection',
   aws_transit_gateway_vpc_attachment: 'Transit gateway attachment',
   aws_vpc_endpoint: 'VPC endpoint', aws_eip: 'Elastic IP',
   aws_security_group: 'Security group', aws_network_acl: 'Network ACL',
+  aws_instance: 'EC2 instance', aws_ebs_volume: 'EBS volume',
+  aws_volume_attachment: 'Volume attachment', aws_lb: 'Load balancer',
+  aws_lb_target_group: 'Target group', aws_lb_listener: 'Listener',
+  aws_lb_target_group_attachment: 'Target attachment',
+  aws_db_instance: 'RDS instance', aws_autoscaling_group: 'Auto Scaling group',
+  aws_launch_template: 'Launch template',
 };
 const GATEWAYS = new Set(['aws_internet_gateway', 'aws_nat_gateway',
   'aws_egress_only_internet_gateway', 'aws_vpn_gateway',
   'aws_vpc_peering_connection', 'aws_transit_gateway_vpc_attachment',
   'aws_vpc_endpoint']);
-// Glue resources become ribbons in the map rather than cards of their own.
+// Routes and associations are drawn as ribbons rather than cards of their own.
 const GLUE = new Set(['aws_route', 'aws_route_table_association',
   'aws_main_route_table_association']);
 
@@ -144,58 +179,44 @@ const esc = t => String(t).replace(/[&<>"]/g,
 const idx = a => (a.match(/\[[^\]]+\]$/) || [''])[0];
 
 // ---------- model -------------------------------------------------------
-// Builds the VPC-console-style view: which subnets sit in which VPC and AZ,
-// which route table each subnet is associated with, and which gateway each
-// route table reaches — resolved through the glue resources.
-function buildMap(state) {
-  const nodes = new Map((state.nodes || []).map(n => [n.id, n]));
-  const deps = new Map();   // id -> [ids it depends on]
-  const rdeps = new Map();  // id -> [ids depending on it]
-  for (const e of state.edges || []) {
+function buildMap(ws) {
+  const nodes = new Map((ws.nodes || []).map(n => [n.id, n]));
+  const deps = new Map();
+  for (const e of ws.edges || []) {
     if (!deps.has(e.from)) deps.set(e.from, []);
     deps.get(e.from).push(e.to);
-    if (!rdeps.has(e.to)) rdeps.set(e.to, []);
-    rdeps.get(e.to).push(e.from);
   }
   const depsOfType = (id, pred) =>
     (deps.get(id) || []).filter(d => nodes.has(d) && pred(nodes.get(d)));
 
-  const links = [];  // {a, b} card-to-card connections drawn as ribbons
+  const links = [];
   const add = (a, b) => { if (a && b && a !== b) links.push({ a, b }); };
 
-  // subnet <-> route table, via associations
   for (const [id, n] of nodes) {
     if (n.type !== 'aws_route_table_association') continue;
-    const subs = depsOfType(id, m => m.type === 'aws_subnet');
-    const rts = depsOfType(id, m => m.type === 'aws_route_table');
-    for (const s of subs) for (const r of rts) add(s, r);
+    for (const s of depsOfType(id, m => m.type === 'aws_subnet'))
+      for (const r of depsOfType(id, m => m.type === 'aws_route_table')) add(s, r);
   }
-  // route table <-> gateway, via routes
   const rtGateways = new Map();
   for (const [id, n] of nodes) {
     if (n.type !== 'aws_route') continue;
-    const rts = depsOfType(id, m => m.type === 'aws_route_table');
-    const gws = depsOfType(id, m => GATEWAYS.has(m.type));
-    for (const r of rts) {
-      for (const g of gws) {
+    for (const r of depsOfType(id, m => m.type === 'aws_route_table')) {
+      for (const g of depsOfType(id, m => GATEWAYS.has(m.type))) {
         add(r, g);
         if (!rtGateways.has(r)) rtGateways.set(r, new Set());
         rtGateways.get(r).add(nodes.get(g).type);
       }
     }
   }
-  // direct containment / attachment edges
   for (const [id, n] of nodes) {
-    if (n.type === 'aws_subnet' || n.type === 'aws_route_table' || GATEWAYS.has(n.type)) {
+    if (n.type === 'aws_subnet' || n.type === 'aws_route_table' || GATEWAYS.has(n.type))
       for (const v of depsOfType(id, m => m.type === 'aws_vpc')) add(id, v);
-    }
-    if (n.type === 'aws_nat_gateway') {
+    if (n.type === 'aws_nat_gateway')
       for (const s of depsOfType(id, m => m.type === 'aws_subnet')) add(id, s);
-    }
   }
 
   // A subnet is public when a route table it is associated with reaches an
-  // internet gateway — the same rule the VPC console uses.
+  // internet gateway — the rule the AWS console itself uses.
   const subnetPublic = new Map();
   for (const { a, b } of links) {
     const [s, r] = nodes.get(a)?.type === 'aws_subnet' ? [a, b] : [b, a];
@@ -204,7 +225,6 @@ function buildMap(state) {
     else if (!subnetPublic.has(s)) subnetPublic.set(s, false);
   }
 
-  // Group everything by VPC (single-VPC configs put strays in that VPC).
   const vpcs = [...nodes.values()].filter(n => n.type === 'aws_vpc');
   const vpcOf = id => {
     const direct = depsOfType(id, m => m.type === 'aws_vpc');
@@ -216,7 +236,8 @@ function buildMap(state) {
     return vpcs.length === 1 ? vpcs[0].id : null;
   };
 
-  const panels = vpcs.map(v => ({ vpc: v, subnets: [], routeTables: [], gateways: [] }));
+  const panels = vpcs.map(v => ({ vpc: v, subnets: [], routeTables: [],
+                                  gateways: [], inVpc: [], contents: new Map() }));
   const byVpc = new Map(panels.map(p => [p.vpc.id, p]));
   const others = [];
   for (const n of nodes.values()) {
@@ -226,126 +247,157 @@ function buildMap(state) {
     if (n.type === 'aws_subnet') p.subnets.push(n);
     else if (n.type === 'aws_route_table') p.routeTables.push(n);
     else if (GATEWAYS.has(n.type)) p.gateways.push(n);
-    else others.push(n);
+    else {
+      // Something living in exactly one subnet is nested inside it; anything
+      // spanning several (a load balancer, say) sits beside the columns.
+      const subs = depsOfType(n.id, m => m.type === 'aws_subnet');
+      if (subs.length === 1) {
+        if (!p.contents.has(subs[0])) p.contents.set(subs[0], []);
+        p.contents.get(subs[0]).push(n);
+      } else p.inVpc.push(n);
+    }
   }
-  return { panels, others, links, nodes, subnetPublic, glue: [...nodes.values()].filter(n => GLUE.has(n.type)) };
+  const bySort = (a, b) => a.id.localeCompare(b.id);
+  for (const p of panels) {
+    p.subnets.sort(bySort); p.routeTables.sort(bySort);
+    p.gateways.sort(bySort); p.inVpc.sort(bySort);
+  }
+  others.sort(bySort);
+  return { panels, others, links, nodes, subnetPublic };
 }
 
 // ---------- render map --------------------------------------------------
-function cardHTML(n, extra) {
+function cardHTML(n, detail, nested) {
   const nice = n.meta?.name || n.name + idx(n.id);
-  const det = extra || n.meta?.cidr || n.meta?.id || n.name + idx(n.id);
-  return `<div class="card" data-id="${esc(n.id)}" title="${esc(n.id)}"
-      style="border-left-color:${COLORS[n.status] || '#8b929c'}">
+  const det = detail !== undefined && detail !== null ? detail
+    : (n.meta?.cidr || n.meta?.spec || n.meta?.az || '');
+  return `<div class="card ${n.status}" data-id="${esc(n.id)}" title="${esc(n.id)}">
     <div class="n">${esc(nice)}</div>
-    <div class="d">${esc(label(n.type))}${det ? ' · ' + esc(det) : ''}</div>
+    <div class="d"><span>${esc(label(n.type))}${det ? ' · ' + esc(det) : ''}</span>
+      <span class="st">${esc(n.status)}</span></div>
+    ${nested || ''}
   </div>`;
 }
 
-function renderMap(state) {
-  const m = buildMap(state);
-  const body = $('mapbody');
-
-  if (!m.panels.length && !m.others.length) {
-    body.innerHTML = '<div class="empty">No resources in this plan.</div>';
-    $('ribbons').innerHTML = '';
-    return;
+function panelHTML(p, m) {
+  const byAz = new Map();
+  for (const s of p.subnets) {
+    const az = s.meta?.az || 'no availability zone';
+    if (!byAz.has(az)) byAz.set(az, []);
+    byAz.get(az).push(s);
   }
+  const subnetCol = [...byAz.entries()].sort().map(([az, subs]) => `
+    <div class="az"><h4>${esc(az)}</h4>
+      ${subs.map(s => {
+        const inside = p.contents.get(s.id) || [];
+        const nested = inside.length
+          ? `<div class="contents">${inside.map(c => cardHTML(c)).join('')}</div>` : '';
+        return cardHTML(s, [m.subnetPublic.get(s.id) ? 'public' : 'private',
+                            s.meta?.cidr].filter(Boolean).join(' · '), nested);
+      }).join('')}
+    </div>`).join('') || '<div class="empty">none</div>';
 
-  body.innerHTML = m.panels.map(p => {
-    const byAz = new Map();
-    for (const s of p.subnets) {
-      const az = s.meta?.az || 'no AZ';
-      if (!byAz.has(az)) byAz.set(az, []);
-      byAz.get(az).push(s);
-    }
-    const subnetCol = [...byAz.entries()].sort().map(([az, subs]) => `
-      <div class="az"><h4>${esc(az)}</h4>
-        ${subs.map(s => cardHTML(s, [
-            m.subnetPublic.get(s.id) ? 'public' : 'private',
-            s.meta?.cidr,
-          ].filter(Boolean).join(' · '))).join('')}
-      </div>`).join('') || '<div class="empty">none</div>';
-
-    const col = (title, items) => `<div class="col">
-        <h3>${title} <span>(${items.length})</span></h3>
-        ${items.length ? items.map(n => cardHTML(n)).join('') : '<div class="empty">none</div>'}
-      </div>`;
-
-    return `<div class="vpc-panel">
-      <div class="vpc-head">
-        <span class="title">${esc(p.vpc.meta?.name || p.vpc.name)}</span>
-        <span class="sub">${esc(p.vpc.meta?.cidr || '')} ${esc(p.vpc.meta?.id || '')}</span>
-        <span class="s" style="margin-left:auto;color:${COLORS[p.vpc.status]}">${esc(p.vpc.status)}</span>
-      </div>
-      <div class="cols">
-        <div class="col"><h3>VPC</h3>${cardHTML(p.vpc)}</div>
-        <div class="col"><h3>Subnets <span>(${p.subnets.length})</span></h3>${subnetCol}</div>
-        ${col('Route tables', p.routeTables)}
-        ${col('Network connections', p.gateways)}
-      </div>
+  const col = (title, items) => `<div class="col">
+      <h3>${title} <span>(${items.length})</span></h3>
+      ${items.length ? items.map(n => cardHTML(n)).join('') : '<div class="empty">none</div>'}
     </div>`;
-  }).join('') + (m.others.length ? `<div class="others">
-      <h3>Other resources <span>(${m.others.length})</span></h3>
-      <div class="grid">${m.others.map(n => cardHTML(n)).join('')}</div>
-    </div>` : '');
 
-  drawRibbons(m);
-  wireHover(m);
+  return `<div class="vpc-panel">
+    <div class="vpc-head">
+      <span class="title">${esc(p.vpc.meta?.name || p.vpc.name)}</span>
+      <span class="sub">${esc(p.vpc.meta?.cidr || '')} ${esc(p.vpc.meta?.id || '')}</span>
+    </div>
+    <div class="cols">
+      <div class="col"><h3>VPC</h3>${cardHTML(p.vpc)}</div>
+      <div class="col"><h3>Subnets <span>(${p.subnets.length})</span></h3>${subnetCol}</div>
+      ${col('Route tables', p.routeTables)}
+      ${col('Network connections', p.gateways)}
+    </div>
+  </div>` + (p.inVpc.length ? `<div class="others">
+      <h3>In this VPC <span>(${p.inVpc.length})</span></h3>
+      <div class="grid">${p.inVpc.map(n => cardHTML(n)).join('')}</div>
+    </div>` : '');
 }
 
-function drawRibbons(m) {
+function renderMap(state) {
+  const body = $('mapbody');
+  const maps = [];
+  body.innerHTML = (state.workspaces || []).map(ws => {
+    const m = buildMap(ws);
+    maps.push(m);
+    const count = (ws.nodes || []).length;
+    const head = `<div class="ws-head">
+        <h2>${esc(ws.name)}</h2>
+        <span class="sub">${ws.terraformVersion ? 'terraform ' + esc(ws.terraformVersion) + ' · ' : ''}${count} resources</span>
+        ${ws.rebuilding ? '<span class="spin">re-planning…</span>' : ''}
+      </div>`;
+    const err = ws.error ? `<div class="ws-err">${esc(ws.error)}</div>` : '';
+    let inner = m.panels.map(p => panelHTML(p, m)).join('');
+    if (m.others.length) inner += `<div class="others">
+        <h3>Other resources <span>(${m.others.length})</span></h3>
+        <div class="grid">${m.others.map(n => cardHTML(n)).join('')}</div>
+      </div>`;
+    if (!inner && !err) inner = '<div class="empty">No resources in this plan.</div>';
+    return `<section class="ws">${head}${err}${inner}</section>`;
+  }).join('') + '<div class="hint">Routes and route-table associations are drawn as the connecting lines rather than as cards.</div>';
+
+  drawRibbons(maps);
+  wireHover(maps);
+}
+
+function drawRibbons(maps) {
   const svg = $('ribbons');
   svg.innerHTML = '';
   const scroll = $('map');
   const base = scroll.getBoundingClientRect();
+  svg.setAttribute('width', scroll.scrollWidth);
+  svg.setAttribute('height', scroll.scrollHeight);
   const box = id => {
     const el = scroll.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.left - base.left + scroll.scrollLeft, y: r.top - base.top + scroll.scrollTop,
-             w: r.width, h: r.height };
+    return { x: r.left - base.left + scroll.scrollLeft,
+             y: r.top - base.top + scroll.scrollTop, w: r.width, h: r.height };
   };
-  svg.setAttribute('width', scroll.scrollWidth);
-  svg.setAttribute('height', scroll.scrollHeight);
-
-  for (const { a, b } of m.links) {
-    const A = box(a), B = box(b);
-    if (!A || !B) continue;
-    // draw left-to-right so ribbons read like the console's
-    const [L, R] = A.x <= B.x ? [A, B] : [B, A];
-    const x1 = L.x + L.w, y1 = L.y + L.h / 2, x2 = R.x, y2 = R.y + R.h / 2;
-    if (x2 < x1) continue; // same column: skip rather than draw a hook
-    const mx = (x1 + x2) / 2;
-    const p = document.createElementNS(svgNS, 'path');
-    p.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
-    p.setAttribute('fill', 'none');
-    p.setAttribute('stroke', '#3d4552');
-    p.setAttribute('stroke-width', '1.6');
-    p.dataset.a = a; p.dataset.b = b;
-    svg.appendChild(p);
+  for (const m of maps) {
+    for (const { a, b } of m.links) {
+      const A = box(a), B = box(b);
+      if (!A || !B) continue;
+      const [L, R] = A.x <= B.x ? [A, B] : [B, A];
+      const x1 = L.x + L.w, y1 = L.y + L.h / 2, x2 = R.x, y2 = R.y + R.h / 2;
+      if (x2 < x1) continue; // same column: a hook would read worse than nothing
+      const mx = (x1 + x2) / 2;
+      const p = document.createElementNS(svgNS, 'path');
+      p.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', '#c3cad3');
+      p.setAttribute('stroke-width', '1.6');
+      p.dataset.a = a; p.dataset.b = b;
+      svg.appendChild(p);
+    }
   }
 }
 
-function wireHover(m) {
+function wireHover(maps) {
   const scroll = $('map');
   const cards = [...scroll.querySelectorAll('.card')];
   const paths = [...$('ribbons').querySelectorAll('path')];
   const adj = new Map();
-  for (const { a, b } of m.links) {
-    if (!adj.has(a)) adj.set(a, new Set());
-    if (!adj.has(b)) adj.set(b, new Set());
-    adj.get(a).add(b); adj.get(b).add(a);
+  for (const m of maps) {
+    for (const { a, b } of m.links) {
+      if (!adj.has(a)) adj.set(a, new Set());
+      if (!adj.has(b)) adj.set(b, new Set());
+      adj.get(a).add(b); adj.get(b).add(a);
+    }
   }
   const clear = () => {
     cards.forEach(c => c.classList.remove('dim', 'hi'));
-    paths.forEach(p => { p.classList.remove('dim'); p.setAttribute('stroke', '#3d4552'); });
+    paths.forEach(p => { p.classList.remove('dim'); p.setAttribute('stroke', '#c3cad3'); });
   };
   for (const card of cards) {
     card.addEventListener('mouseenter', () => {
-      // reachable set: the full path through the map, like the console's hover
-      const seen = new Set([card.dataset.id]);
-      const queue = [card.dataset.id];
+      if (!adj.has(card.dataset.id)) return; // unconnected card: no path to trace
+      const seen = new Set([card.dataset.id]), queue = [card.dataset.id];
       while (queue.length) {
         for (const next of adj.get(queue.shift()) || []) {
           if (!seen.has(next)) { seen.add(next); queue.push(next); }
@@ -358,14 +410,14 @@ function wireHover(m) {
       paths.forEach(p => {
         const on = seen.has(p.dataset.a) && seen.has(p.dataset.b);
         p.classList.toggle('dim', !on);
-        p.setAttribute('stroke', on ? '#6b7787' : '#3d4552');
+        p.setAttribute('stroke', on ? '#7b8797' : '#c3cad3');
       });
     });
     card.addEventListener('mouseleave', clear);
   }
 }
 
-// ---------- graph tab (ELK) ---------------------------------------------
+// ---------- graph tab ---------------------------------------------------
 const elk = new ELK();
 const CHAR = 7.3, PAD_X = 14, NODE_H = 46;
 let view = { x: 0, y: 0, k: 1 }, firstGraphDraw = true;
@@ -396,28 +448,36 @@ function toElk(state) {
   const groups = new Map();
   const root = { id: '__root__', layoutOptions: {
       'elk.algorithm': 'layered', 'elk.direction': 'RIGHT',
-      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      'elk.spacing.nodeNode': '24',
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN', 'elk.spacing.nodeNode': '24',
       'elk.layered.spacing.nodeNodeBetweenLayers': '56',
       'elk.padding': '[top=20,left=20,bottom=20,right=20]' },
     children: [], edges: [] };
   groups.set('', root);
-  const groupFor = addr => {
+  const groupFor = (addr, labelText) => {
     if (groups.has(addr)) return groups.get(addr);
-    const parent = groupFor(addr.replace(/(^|\.)module\.[^.]+$/, ''));
+    const parentAddr = addr.includes('|') ? addr.slice(0, addr.lastIndexOf('|'))
+                                          : addr.replace(/(^|\.)module\.[^.]+$/, '');
+    const parent = groupFor(parentAddr);
     const g = { id: 'group:' + addr, isModule: true,
-      label: addr.slice(addr.lastIndexOf('module.')),
+      label: labelText || addr.slice(addr.lastIndexOf('module.')),
       layoutOptions: { 'elk.padding': '[top=34,left=16,bottom=16,right=16]' },
       children: [], edges: [] };
     parent.children.push(g); groups.set(addr, g); return g;
   };
-  for (const n of state.nodes || []) {
-    groupFor(n.module).children.push({ id: n.id, node: n,
-      width: Math.max(n.type.length, n.name.length + 2) * CHAR + PAD_X * 2,
-      height: NODE_H });
-  }
-  for (const e of state.edges || []) {
-    root.edges.push({ id: e.from + '>' + e.to, sources: [e.from], targets: [e.to] });
+  for (const ws of state.workspaces || []) {
+    const wsKey = 'ws|' + ws.name;
+    groupFor(wsKey, ws.name);
+    for (const n of ws.nodes || []) {
+      const key = n.module ? wsKey + '|' + n.module : wsKey;
+      if (n.module) groupFor(key, n.module);
+      groups.get(key).children.push({ id: ws.name + '/' + n.id, node: n,
+        width: Math.max(n.type.length, n.name.length + 2) * CHAR + PAD_X * 2,
+        height: NODE_H });
+    }
+    for (const e of ws.edges || []) {
+      root.edges.push({ id: ws.name + e.from + '>' + e.to,
+        sources: [ws.name + '/' + e.from], targets: [ws.name + '/' + e.to] });
+    }
   }
   return root;
 }
@@ -427,7 +487,7 @@ function drawGraph(layout) {
   const defs = document.createElementNS(svgNS, 'defs');
   defs.innerHTML = `<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
       markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#566070"/></marker>`;
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a9b3c0"/></marker>`;
   world.appendChild(defs);
   const el = (name, attrs, parent) => {
     const x = document.createElementNS(svgNS, name);
@@ -445,10 +505,9 @@ function drawGraph(layout) {
         walk(c, x, y);
       } else {
         pos.set(c.id, { x, y, w: c.width, h: c.height });
-        const n = c.node, color = COLORS[n.status] || '#8b929c';
+        const n = c.node, color = GRAPH_COLORS[n.status] || '#929cab';
         const box = el('rect', { class: 'node-box', x, y, width: c.width,
           height: c.height, rx: 6, stroke: color }, nodeLayer);
-        if (n.status === 'destroy') box.setAttribute('opacity', '0.65');
         if (n.status === 'create') box.setAttribute('stroke-dasharray', '7 4');
         el('text', { class: 'node-type', x: x + PAD_X, y: y + 19, fill: color },
           nodeLayer).textContent = n.type;
@@ -476,7 +535,7 @@ function drawGraph(layout) {
     el('path', { class: 'edge', 'marker-end': 'url(#arrow)',
       d: `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}` }, edgeLayer);
   }
-  if (firstGraphDraw) {
+  if (firstGraphDraw && layout.width) {
     const r = $('graph').getBoundingClientRect();
     const k = Math.min(r.width / (layout.width + 80), r.height / (layout.height + 80), 1.5);
     view = { x: (r.width - layout.width * k) / 2, y: (r.height - layout.height * k) / 2, k };
@@ -504,12 +563,14 @@ async function paint(s) {
 
 async function render(s) {
   latest = s;
-  $('dot').className = s.rebuilding ? 'busy' : 'live';
-  $('meta').textContent = `terraform ${s.terraformVersion || '?'} · ` +
-    `${(s.nodes || []).length} resources · ${new Date(s.generatedAt).toLocaleTimeString()}`;
-  $('error').style.display = s.error ? 'block' : 'none';
-  $('error').textContent = s.error || '';
-  if (s.rebuilding || s.error) return; // keep the current view on screen
+  const wss = s.workspaces || [];
+  const total = wss.reduce((a, w) => a + (w.nodes || []).length, 0);
+  const busy = wss.some(w => w.rebuilding);
+  const failed = wss.filter(w => w.error).length;
+  $('dot').className = busy ? 'busy' : 'live';
+  $('meta').textContent = `${wss.length} workspace${wss.length === 1 ? '' : 's'} · ` +
+    `${total} resources${failed ? ` · ${failed} failing` : ''} · ` +
+    new Date(s.generatedAt).toLocaleTimeString();
   await paint(s);
 }
 
@@ -517,8 +578,8 @@ window.addEventListener('resize', () => { if (latest && tab === 'map') renderMap
 
 const es = new EventSource('/events');
 es.onmessage = e => render(JSON.parse(e.data)).catch(err => {
-  $('error').style.display = 'block';
-  $('error').textContent = 'render error: ' + err.message;
+  $('mapbody').insertAdjacentHTML('afterbegin',
+    `<div class="ws-err">render error: ${esc(err.message)}</div>`);
 });
 es.onerror = () => { $('dot').className = 'down'; };
 </script>

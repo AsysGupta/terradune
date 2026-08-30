@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/AsysGupta/terradune/internal/graph"
 	"github.com/AsysGupta/terradune/internal/ingest"
@@ -19,12 +20,19 @@ import (
 
 var version = "dev"
 
+// planConcurrency bounds parallel `terraform plan` runs: enough to keep a
+// multi-workspace scan quick without thrashing a laptop.
+const planConcurrency = 3
+
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	printOnly := flag.Bool("print", false, "print the inventory and graph once, without serving")
 	port := flag.Int("port", 8383, "port for the local server")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terradune [flags] <path-to-terraform-dir>\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terradune [flags] <path>\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(),
+			"<path> may be a Terraform workspace or a directory containing several;\n"+
+				"every initialized workspace beneath it is planned and drawn.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -46,54 +54,107 @@ func main() {
 }
 
 func run(ctx context.Context, dir string, port int, printOnly bool) error {
-	abs, err := filepath.Abs(dir)
+	root, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
-
-	inv, err := ingest.Load(ctx, abs)
+	workspaces, err := ingest.Discover(root)
 	if err != nil {
 		return err
 	}
-	g := graph.Build(inv.Plan)
 
 	if printOnly {
-		inv.PrintSummary(os.Stdout)
-		g.Print(os.Stdout)
+		for _, ws := range workspaces {
+			fmt.Printf("\n=== %s ===\n", ws.Name)
+			inv, err := ingest.Load(ctx, ws.Dir)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+			inv.PrintSummary(os.Stdout)
+			graph.Build(inv.Plan).Print(os.Stdout)
+		}
 		return nil
 	}
 
-	srv := server.New()
-	srv.SetGraph(inv.TerraformVersion, g)
-
-	// One rebuild at a time; extra triggers during a rebuild coalesce into one.
-	trigger := make(chan struct{}, 1)
-	go func() {
-		if err := watch.Watch(ctx, abs, func() {
-			select {
-			case trigger <- struct{}{}:
-			default:
-			}
-		}); err != nil && ctx.Err() == nil {
-			log.Printf("watcher stopped: %v", err)
+	srv := server.New(root)
+	plan := func(ws ingest.Workspace) {
+		srv.SetRebuilding(ws.Name, ws.Dir)
+		inv, err := ingest.Load(ctx, ws.Dir)
+		if err != nil {
+			log.Printf("%s: plan failed: %v", ws.Name, err)
+			srv.SetError(ws.Name, ws.Dir, err.Error())
+			return
 		}
-	}()
+		srv.SetGraph(ws.Name, ws.Dir, inv.TerraformVersion, graph.Build(inv.Plan))
+		log.Printf("%s: %d resources", ws.Name, len(inv.Resources))
+	}
+
+	log.Printf("planning %d workspace(s) under %s", len(workspaces), root)
+	go planAll(workspaces, plan)
+
+	// Rebuilds are serialized per workspace; a change arriving mid-plan
+	// queues exactly one follow-up rather than piling up.
+	rebuild := make(chan ingest.Workspace, len(workspaces))
 	go func() {
-		for range trigger {
-			log.Printf("change detected, re-planning %s", abs)
-			srv.SetRebuilding()
-			inv, err := ingest.Load(ctx, abs)
-			if err != nil {
-				log.Printf("rebuild failed: %v", err)
-				srv.SetError(err.Error())
+		queued := map[string]bool{}
+		var mu sync.Mutex
+		for ws := range rebuild {
+			mu.Lock()
+			if queued[ws.Name] {
+				mu.Unlock()
 				continue
 			}
-			srv.SetGraph(inv.TerraformVersion, graph.Build(inv.Plan))
-			log.Printf("rebuilt: %d resources", len(inv.Resources))
+			queued[ws.Name] = true
+			mu.Unlock()
+
+			plan(ws)
+
+			mu.Lock()
+			delete(queued, ws.Name)
+			mu.Unlock()
+		}
+	}()
+
+	go func() {
+		err := watch.Watch(ctx, root, func(paths []string) {
+			hit := map[string]ingest.Workspace{}
+			for _, p := range paths {
+				if ws, ok := ingest.Owner(workspaces, p); ok {
+					hit[ws.Name] = ws
+				}
+			}
+			if len(hit) == 0 { // a shared file outside every workspace
+				for _, ws := range workspaces {
+					hit[ws.Name] = ws
+				}
+			}
+			for _, ws := range hit {
+				log.Printf("%s: change detected", ws.Name)
+				rebuild <- ws
+			}
+		})
+		if err != nil && ctx.Err() == nil {
+			log.Printf("watcher stopped: %v", err)
 		}
 	}()
 
 	addr := fmt.Sprintf("localhost:%d", port)
-	log.Printf("terradune serving http://%s (watching %s)", addr, abs)
+	log.Printf("terradune serving http://%s", addr)
 	return http.ListenAndServe(addr, srv.Handler())
+}
+
+func planAll(workspaces []ingest.Workspace, plan func(ingest.Workspace)) {
+	sem := make(chan struct{}, planConcurrency)
+	var wg sync.WaitGroup
+	for _, ws := range workspaces {
+		wg.Add(1)
+		go func(ws ingest.Workspace) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			plan(ws)
+		}(ws)
+	}
+	wg.Wait()
 }

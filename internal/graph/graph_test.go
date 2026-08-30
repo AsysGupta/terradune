@@ -114,6 +114,37 @@ func TestBuildVPCPlanPairsInstancesByIndex(t *testing.T) {
 	}
 }
 
+func TestBuildEC2PlanPinsLiteralIndexes(t *testing.T) {
+	g := Build(loadFixture(t, "testdata/ec2_plan.json"))
+
+	edges := map[Edge]bool{}
+	for _, e := range g.Edges {
+		edges[e] = true
+	}
+	// bastion references aws_subnet.web[0] literally, so it must reach that
+	// one subnet and not fan out across every instance of aws_subnet.web.
+	if !edges[Edge{From: "aws_instance.bastion", To: "aws_subnet.web[0]"}] {
+		t.Error("missing pinned edge aws_instance.bastion -> aws_subnet.web[0]")
+	}
+	if edges[Edge{From: "aws_instance.bastion", To: "aws_subnet.web[1]"}] {
+		t.Error("unexpected fan-out edge aws_instance.bastion -> aws_subnet.web[1]")
+	}
+	// count.index pairing still holds alongside pinning
+	if !edges[Edge{From: "aws_instance.app[1]", To: "aws_subnet.app[1]"}] {
+		t.Error("missing paired edge aws_instance.app[1] -> aws_subnet.app[1]")
+	}
+	if edges[Edge{From: "aws_instance.app[0]", To: "aws_subnet.app[1]"}] {
+		t.Error("unexpected cross-index edge aws_instance.app[0] -> aws_subnet.app[1]")
+	}
+	// a resource spanning several subnets keeps every edge
+	for _, i := range []string{"0", "1"} {
+		e := Edge{From: "aws_lb.app", To: "aws_subnet.web[" + i + "]"}
+		if !edges[e] {
+			t.Errorf("missing edge %s -> %s", e.From, e.To)
+		}
+	}
+}
+
 func TestStripIndexes(t *testing.T) {
 	cases := map[string]string{
 		`module.x["a"].aws_foo.bar[0]`: "module.x.aws_foo.bar",

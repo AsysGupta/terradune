@@ -114,11 +114,13 @@ func Build(plan *tfjson.Plan) *Graph {
 
 // metaKeys maps attribute names to the shorter keys sent to the UI.
 var metaKeys = map[string]string{
-	"id":                "id",
-	"availability_zone": "az",
-	"cidr_block":        "cidr",
-	"vpc_id":            "vpc_id",
-	"subnet_id":         "subnet_id",
+	"id":                 "id",
+	"availability_zone":  "az",
+	"cidr_block":         "cidr",
+	"vpc_id":             "vpc_id",
+	"subnet_id":          "subnet_id",
+	"instance_type":      "spec",
+	"load_balancer_type": "spec",
 }
 
 func collectValues(mod *tfjson.StateModule, out map[string]map[string]string) {
@@ -221,14 +223,22 @@ func (r *resolver) walkModule(mod *tfjson.ConfigModule, moduleAddr string) {
 		}
 
 		for _, grp := range groups {
-			targets := map[string]bool{}
+			t := &targets{cfg: map[string]bool{}, pinned: map[string]map[string]bool{}}
 			for ref := range grp.refs {
-				r.resolveRef(ref, moduleAddr, targets, map[string]bool{})
+				r.resolveRef(ref, moduleAddr, t, map[string]bool{})
 			}
-			for toCfg := range targets {
+			for toCfg := range t.cfg {
+				pins := t.pinned[toCfg]
 				for _, from := range r.instances[fromCfg] {
 					for _, to := range r.instances[toCfg] {
-						if grp.paired {
+						switch {
+						case len(pins) > 0:
+							// A literal index (aws_subnet.web[0]) names one
+							// instance; it wins over any index pairing.
+							if !pins[instanceKey(to)] {
+								continue
+							}
+						case grp.paired:
 							fk, tk := instanceKey(from), instanceKey(to)
 							if fk != "" && tk != "" && fk != tk {
 								continue
@@ -251,12 +261,19 @@ func (r *resolver) walkModule(mod *tfjson.ConfigModule, moduleAddr string) {
 	}
 }
 
-// resolveRef maps a config reference (as seen from moduleAddr) to resource
-// config addresses, adding them to targets. Direct resource references
-// resolve immediately; module output references are followed into the child
-// module's output expression, recursively. Variables, locals, and data
-// sources are not followed yet.
-func (r *resolver) resolveRef(ref string, moduleAddr string, targets map[string]bool, visiting map[string]bool) {
+// targets collects what an expression refers to: resource config addresses,
+// plus — when a reference carries a literal index like aws_subnet.web[0] —
+// the specific instance keys it names.
+type targets struct {
+	cfg    map[string]bool
+	pinned map[string]map[string]bool // config address -> instance keys
+}
+
+// resolveRef maps a config reference (as seen from moduleAddr) into t.
+// Direct resource references resolve immediately; module output references
+// are followed into the child module's output expression, recursively.
+// Variables, locals, and data sources are not followed yet.
+func (r *resolver) resolveRef(ref string, moduleAddr string, t *targets, visiting map[string]bool) {
 	parts := strings.Split(ref, ".")
 	if len(parts) < 2 {
 		return
@@ -268,7 +285,7 @@ func (r *resolver) resolveRef(ref string, moduleAddr string, targets map[string]
 		if len(parts) < 3 {
 			return
 		}
-		childAddr := joinAddr(moduleAddr, "module."+parts[1])
+		childAddr := joinAddr(moduleAddr, "module."+stripIndexes(parts[1]))
 		outputName := parts[2]
 		key := childAddr + "|" + outputName
 		if visiting[key] {
@@ -286,11 +303,18 @@ func (r *resolver) resolveRef(ref string, moduleAddr string, targets map[string]
 		outRefs := map[string]bool{}
 		collectRefs(out.Expression, outRefs)
 		for outRef := range outRefs {
-			r.resolveRef(outRef, childAddr, targets, visiting)
+			r.resolveRef(outRef, childAddr, t, visiting)
 		}
 		return
 	}
-	targets[joinAddr(moduleAddr, parts[0]+"."+parts[1])] = true
+	cfg := joinAddr(moduleAddr, parts[0]+"."+stripIndexes(parts[1]))
+	t.cfg[cfg] = true
+	if key := instanceKey(parts[1]); key != "" {
+		if t.pinned[cfg] == nil {
+			t.pinned[cfg] = map[string]bool{}
+		}
+		t.pinned[cfg][key] = true
+	}
 }
 
 func collectRefs(expr *tfjson.Expression, refs map[string]bool) {
