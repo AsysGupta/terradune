@@ -40,6 +40,7 @@ type Server struct {
 	mu         sync.Mutex
 	root       string
 	workspaces map[string]*Workspace
+	details    map[string]map[string]*graph.Detail // workspace -> address -> detail
 	current    []byte
 	clients    map[chan []byte]bool
 }
@@ -48,6 +49,7 @@ func New(root string) *Server {
 	return &Server{
 		root:       root,
 		workspaces: map[string]*Workspace{},
+		details:    map[string]map[string]*graph.Detail{},
 		clients:    map[chan []byte]bool{},
 	}
 }
@@ -62,12 +64,13 @@ func (s *Server) get(name, dir string) *Workspace {
 }
 
 // SetGraph records a successful plan for one workspace.
-func (s *Server) SetGraph(name, dir, tfVersion string, g *graph.Graph) {
+func (s *Server) SetGraph(name, dir, tfVersion string, g *graph.Graph, details map[string]*graph.Detail) {
 	s.mu.Lock()
 	ws := s.get(name, dir)
 	ws.TerraformVersion = tfVersion
 	ws.Nodes, ws.Edges = g.Nodes, g.Edges
 	ws.Error, ws.Rebuilding = "", false
+	s.details[name] = details
 	s.broadcastLocked()
 	s.mu.Unlock()
 }
@@ -129,8 +132,68 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(payload)
 	})
+	mux.HandleFunc("/resource", s.handleResource)
 	mux.HandleFunc("/events", s.handleEvents)
 	return mux
+}
+
+// related is one end of a dependency, shown beside a resource's own detail.
+type related struct {
+	Address string                 `json:"address"`
+	Type    string                 `json:"type"`
+	Status  string                 `json:"status"`
+	After   map[string]interface{} `json:"after,omitempty"`
+	Unknown []string               `json:"unknown,omitempty"`
+}
+
+// resourceResponse is what the detail panel renders: the resource itself,
+// what attaches to it (a route table's routes, an instance's attachments),
+// and what it depends on.
+type resourceResponse struct {
+	*graph.Detail
+	Attached  []related `json:"attached"`
+	DependsOn []related `json:"dependsOn"`
+}
+
+func (s *Server) handleResource(w http.ResponseWriter, r *http.Request) {
+	wsName := r.URL.Query().Get("workspace")
+	addr := r.URL.Query().Get("address")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byAddr, ok := s.details[wsName]
+	if !ok {
+		http.Error(w, "unknown workspace", http.StatusNotFound)
+		return
+	}
+	detail, ok := byAddr[addr]
+	if !ok {
+		http.Error(w, "unknown resource", http.StatusNotFound)
+		return
+	}
+	ws := s.workspaces[wsName]
+	resp := resourceResponse{Detail: detail, Attached: []related{}, DependsOn: []related{}}
+	if ws != nil {
+		for _, e := range ws.Edges {
+			switch addr {
+			case e.To: // things pointing at this resource
+				resp.Attached = append(resp.Attached, relate(byAddr, e.From))
+			case e.From: // what this resource needs
+				resp.DependsOn = append(resp.DependsOn, relate(byAddr, e.To))
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func relate(byAddr map[string]*graph.Detail, addr string) related {
+	d, ok := byAddr[addr]
+	if !ok {
+		return related{Address: addr}
+	}
+	return related{Address: d.Address, Type: d.Type, Status: d.Status,
+		After: d.After, Unknown: d.Unknown}
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

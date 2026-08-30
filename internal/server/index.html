@@ -78,9 +78,13 @@
   .az > h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted); font-weight: 400;
              font-family: var(--mono); }
 
-  .card { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px;
-          padding: 6px 9px; margin-bottom: 7px; background: var(--surface);
+  .card { position: relative; border: 1px solid var(--line); border-left-width: 4px;
+          border-radius: 6px; padding: 6px 26px 6px 9px; margin-bottom: 7px;
+          background: var(--surface); cursor: pointer;
           transition: opacity .12s, box-shadow .12s; }
+  .card .ico { position: absolute; top: 5px; right: 5px; width: 17px; height: 17px;
+               opacity: .92; }
+  .contents .card .ico { width: 14px; height: 14px; top: 4px; right: 4px; }
   .card:last-child { margin-bottom: 0; }
   .card .n { font-weight: 700; overflow-wrap: anywhere; font-size: 12.5px; }
   .card .d { color: var(--muted); font-size: 11px; font-family: var(--mono);
@@ -115,6 +119,53 @@
   .module-label { font: 700 11px var(--mono); fill: var(--muted); }
   .edge { fill: none; stroke: #a9b3c0; stroke-width: 1.3; }
 
+  #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 430px; max-width: 92vw;
+            background: var(--surface); border-left: 1px solid var(--line);
+            box-shadow: -6px 0 24px rgba(20,30,50,.10); z-index: 20;
+            display: none; flex-direction: column; }
+  #drawer.open { display: flex; }
+  .dr-head { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px;
+             border-bottom: 1px solid var(--line); }
+  .dr-head .ico { width: 26px; height: 26px; flex: none; margin-top: 1px; }
+  .dr-head h2 { margin: 0; font-size: 14.5px; font-weight: 700; overflow-wrap: anywhere; }
+  .dr-head .addr { color: var(--muted); font-family: var(--mono); font-size: 11px;
+                   overflow-wrap: anywhere; }
+  .dr-head button { margin-left: auto; background: none; border: none; cursor: pointer;
+                    font-size: 19px; line-height: 1; color: var(--muted); padding: 0 2px; }
+  .pill { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 7px;
+          border-radius: 99px; border: 1px solid; text-transform: uppercase;
+          letter-spacing: .05em; }
+  .pill.create   { background: var(--create-bg);   border-color: var(--create-bd);   color: var(--create-fg); }
+  .pill.existing { background: var(--existing-bg); border-color: var(--existing-bd); color: var(--existing-fg); }
+  .pill.update   { background: var(--update-bg);   border-color: var(--update-bd);   color: var(--update-fg); }
+  .pill.replace  { background: var(--replace-bg);  border-color: var(--replace-bd);  color: var(--replace-fg); }
+  .pill.destroy  { background: var(--destroy-bg);  border-color: var(--destroy-bd);  color: var(--destroy-fg); }
+  .dr-body { overflow: auto; padding: 12px 16px 30px; }
+  .dr-body h3 { margin: 16px 0 8px; font-size: 10.5px; color: var(--muted);
+                text-transform: uppercase; letter-spacing: .07em; font-weight: 700; }
+  .dr-body h3:first-child { margin-top: 4px; }
+  .attrs { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .attrs td { padding: 3px 6px; border-bottom: 1px solid var(--line-soft);
+              vertical-align: top; overflow-wrap: anywhere; }
+  .attrs td.k { color: var(--muted); font-family: var(--mono); font-size: 11px;
+                width: 42%; }
+  .attrs td.v { font-family: var(--mono); font-size: 11px; }
+  .attrs pre { margin: 0; white-space: pre-wrap; font-size: 10.5px; }
+  .unk { color: var(--faint); font-style: italic; }
+  .was { color: var(--destroy-fg); text-decoration: line-through; opacity: .8; }
+  .now { color: var(--create-fg); }
+  .rel { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px;
+         overflow: hidden; }
+  .rel > summary { list-style: none; cursor: pointer; padding: 6px 9px;
+                   display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .rel > summary::-webkit-details-marker { display: none; }
+  .rel > summary .ico { width: 15px; height: 15px; flex: none; }
+  .rel > summary .sum { color: var(--muted); font-family: var(--mono); font-size: 11px;
+                        overflow-wrap: anywhere; }
+  .rel[open] > summary { border-bottom: 1px solid var(--line-soft); background: var(--sunken); }
+  .rel .inner { padding: 6px 9px; }
+  .none { color: var(--faint); font-size: 12px; font-style: italic; }
+
   #legend { position: fixed; right: 16px; bottom: 16px; background: var(--surface);
             border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px;
             font-size: 11px; z-index: 5; box-shadow: 0 2px 10px rgba(20,30,50,.07); }
@@ -135,6 +186,18 @@
 </header>
 <div id="map"><svg id="ribbons"></svg><div id="mapbody"></div></div>
 <svg id="graph"></svg>
+<aside id="drawer">
+  <div class="dr-head">
+    <span class="ico" id="dr-ico"></span>
+    <div style="min-width:0">
+      <h2 id="dr-title"></h2>
+      <div class="addr" id="dr-addr"></div>
+      <div style="margin-top:5px"><span class="pill" id="dr-pill"></span></div>
+    </div>
+    <button id="dr-close" title="Close">&times;</button>
+  </div>
+  <div class="dr-body" id="dr-body"></div>
+</aside>
 <div id="legend">
   <div><i style="background:var(--create-bg);border-color:var(--create-bd)"></i> will be created</div>
   <div><i style="background:var(--existing-bg);border-color:var(--existing-bd)"></i> already exists</div>
@@ -172,6 +235,46 @@ const GATEWAYS = new Set(['aws_internet_gateway', 'aws_nat_gateway',
 // Routes and associations are drawn as ribbons rather than cards of their own.
 const GLUE = new Set(['aws_route', 'aws_route_table_association',
   'aws_main_route_table_association']);
+
+// Service glyphs drawn in the AWS category colors: a rounded tile per service
+// group with a simple white pictogram. Hand-authored so the binary stays
+// self-contained and offline.
+const CAT = { net: '#8C4FFF', compute: '#ED7100', storage: '#7AA116',
+              db: '#3334B9', security: '#DD344C', other: '#7D8998' };
+const S = 'fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
+const GLYPH = {
+  aws_vpc:              [CAT.net, `<rect x="5" y="6" width="14" height="12" rx="2" ${S}/><path d="M5 9.5h14" ${S}/>`],
+  aws_subnet:           [CAT.net, `<rect x="5.5" y="6.5" width="13" height="11" rx="1.5" ${S} stroke-dasharray="3 2.2"/>`],
+  aws_route_table:      [CAT.net, `<rect x="5" y="6" width="14" height="12" rx="1.6" ${S}/><path d="M5 10h14M5 14h14M11 10v8" ${S}/>`],
+  aws_route:            [CAT.net, `<path d="M6 12h12M14 8l4 4-4 4" ${S}/>`],
+  aws_route_table_association: [CAT.net, `<path d="M10 9.5H8a2.5 2.5 0 000 5h2M14 9.5h2a2.5 2.5 0 010 5h-2M9 12h6" ${S}/>`],
+  aws_internet_gateway: [CAT.net, `<circle cx="12" cy="12" r="6" ${S}/><path d="M6 12h12M12 6c2.4 3 2.4 9 0 12M12 6c-2.4 3-2.4 9 0 12" ${S}/>`],
+  aws_nat_gateway:      [CAT.net, `<rect x="5" y="6.5" width="14" height="11" rx="2" ${S}/><path d="M8 10.5h6l-2-2M16 13.5h-6l2 2" ${S}/>`],
+  aws_vpn_gateway:      [CAT.net, `<rect x="5" y="9" width="14" height="8" rx="2" ${S}/><path d="M9 9V7.5a3 3 0 016 0V9" ${S}/>`],
+  aws_egress_only_internet_gateway: [CAT.net, `<circle cx="12" cy="12" r="6" ${S}/><path d="M9 12h6l-2.5-2.5M15 12l-2.5 2.5" ${S}/>`],
+  aws_vpc_endpoint:     [CAT.net, `<circle cx="12" cy="12" r="3" ${S}/><path d="M12 6v3M12 15v3M6 12h3M15 12h3" ${S}/>`],
+  aws_vpc_peering_connection: [CAT.net, `<circle cx="8.5" cy="12" r="3" ${S}/><circle cx="15.5" cy="12" r="3" ${S}/>`],
+  aws_eip:              [CAT.net, `<path d="M12 5.5a4.3 4.3 0 00-4.3 4.3c0 3.3 4.3 8.7 4.3 8.7s4.3-5.4 4.3-8.7A4.3 4.3 0 0012 5.5z" ${S}/><circle cx="12" cy="9.8" r="1.5" fill="#fff"/>`],
+  aws_lb:               [CAT.net, `<circle cx="12" cy="7" r="1.9" ${S}/><circle cx="6.5" cy="17" r="1.9" ${S}/><circle cx="12" cy="17" r="1.9" ${S}/><circle cx="17.5" cy="17" r="1.9" ${S}/><path d="M12 8.9v2.6M12 11.5H6.5v3.6M12 11.5h5.5v3.6M12 11.5v3.6" ${S}/>`],
+  aws_lb_target_group:  [CAT.net, `<circle cx="12" cy="12" r="6" ${S}/><circle cx="12" cy="12" r="2.6" ${S}/>`],
+  aws_lb_listener:      [CAT.net, `<path d="M6 12h6M9.5 8.5L6 12l3.5 3.5" ${S}/><rect x="13" y="7.5" width="6" height="9" rx="1.5" ${S}/>`],
+  aws_lb_target_group_attachment: [CAT.net, `<path d="M10 9.5H8a2.5 2.5 0 000 5h2M14 9.5h2a2.5 2.5 0 010 5h-2M9 12h6" ${S}/>`],
+  aws_instance:         [CAT.compute, `<rect x="7" y="7" width="10" height="10" rx="1.4" ${S}/><path d="M10 4.8v2.2M14 4.8v2.2M10 17v2.2M14 17v2.2M4.8 10H7M4.8 14H7M17 10h2.2M17 14h2.2" ${S}/>`],
+  aws_launch_template:  [CAT.compute, `<path d="M7 5.5h7l3.5 3.5v9.5H7z" ${S}/><path d="M13.6 5.5V9h3.6" ${S}/>`],
+  aws_autoscaling_group:[CAT.compute, `<path d="M7.5 10a5 5 0 019-2M16.5 14a5 5 0 01-9 2" ${S}/><path d="M6.6 6.4V9h2.6M17.4 17.6V15h-2.6" ${S}/>`],
+  aws_ebs_volume:       [CAT.storage, `<ellipse cx="12" cy="8" rx="6" ry="2.4" ${S}/><path d="M6 8v8c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4V8" ${S}/>`],
+  aws_volume_attachment:[CAT.storage, `<path d="M10 9.5H8a2.5 2.5 0 000 5h2M14 9.5h2a2.5 2.5 0 010 5h-2M9 12h6" ${S}/>`],
+  aws_db_instance:      [CAT.db, `<ellipse cx="12" cy="7.5" rx="5.5" ry="2.2" ${S}/><path d="M6.5 7.5v9c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2v-9M6.5 12c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2" ${S}/>`],
+  aws_security_group:   [CAT.security, `<path d="M12 5.2l6 2.1v4.4c0 3.4-2.4 6.2-6 7.4-3.6-1.2-6-4-6-7.4V7.3z" ${S}/>`],
+  aws_network_acl:      [CAT.security, `<path d="M12 5.2l6 2.1v4.4c0 3.4-2.4 6.2-6 7.4-3.6-1.2-6-4-6-7.4V7.3z" ${S}/><path d="M9.4 12.2l1.9 1.9 3.4-3.6" ${S}/>`],
+};
+const FALLBACK = [CAT.other, `<rect x="6" y="6.5" width="12" height="11" rx="2" ${S}/><path d="M6 10.2h12" ${S}/>`];
+
+function iconSVG(type) {
+  const [color, glyph] = GLYPH[type] || FALLBACK;
+  return `<svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">
+    <rect width="24" height="24" rx="5" fill="${color}"/>${glyph}</svg>`;
+}
 
 const label = t => LABELS[t] || t.replace(/^aws_/, '').replace(/_/g, ' ');
 const esc = t => String(t).replace(/[&<>"]/g,
@@ -267,11 +370,15 @@ function buildMap(ws) {
 }
 
 // ---------- render map --------------------------------------------------
+let RENDER_WS = ''; // workspace whose cards are being emitted
+
 function cardHTML(n, detail, nested) {
   const nice = n.meta?.name || n.name + idx(n.id);
   const det = detail !== undefined && detail !== null ? detail
     : (n.meta?.cidr || n.meta?.spec || n.meta?.az || '');
-  return `<div class="card ${n.status}" data-id="${esc(n.id)}" title="${esc(n.id)}">
+  return `<div class="card ${n.status}" data-id="${esc(n.id)}" data-ws="${esc(RENDER_WS)}"
+      title="${esc(n.id)}">
+    <span class="ico">${iconSVG(n.type)}</span>
     <div class="n">${esc(nice)}</div>
     <div class="d"><span>${esc(label(n.type))}${det ? ' · ' + esc(det) : ''}</span>
       <span class="st">${esc(n.status)}</span></div>
@@ -323,6 +430,7 @@ function renderMap(state) {
   const body = $('mapbody');
   const maps = [];
   body.innerHTML = (state.workspaces || []).map(ws => {
+    RENDER_WS = ws.name;
     const m = buildMap(ws);
     maps.push(m);
     const count = (ws.nodes || []).length;
@@ -414,8 +522,132 @@ function wireHover(maps) {
       });
     });
     card.addEventListener('mouseleave', clear);
+    card.addEventListener('click', ev => {
+      ev.stopPropagation(); // a nested card opens itself, not its subnet
+      openDetail(card.dataset.ws, card.dataset.id);
+    });
   }
 }
+
+// ---------- detail drawer -----------------------------------------------
+const SKIP_ATTRS = new Set(['tags_all']);
+// Attributes worth leading with, per resource type, so the useful line is
+// visible before the long tail of defaults.
+const SUMMARY_KEYS = {
+  aws_route: ['destination_cidr_block', 'destination_ipv6_cidr_block', 'gateway_id',
+              'nat_gateway_id', 'transit_gateway_id', 'vpc_peering_connection_id',
+              'network_interface_id'],
+  aws_route_table_association: ['subnet_id', 'route_table_id'],
+  aws_volume_attachment: ['device_name', 'volume_id', 'instance_id'],
+  aws_lb_target_group_attachment: ['target_id', 'port'],
+  aws_instance: ['instance_type', 'ami', 'subnet_id', 'private_ip'],
+  aws_subnet: ['cidr_block', 'availability_zone'],
+  aws_vpc: ['cidr_block'],
+  aws_eip: ['domain', 'public_ip'],
+  aws_ebs_volume: ['size', 'type', 'availability_zone'],
+  aws_lb: ['load_balancer_type', 'internal'],
+  aws_lb_listener: ['port', 'protocol'],
+  aws_lb_target_group: ['port', 'protocol'],
+  aws_security_group: ['name', 'name_prefix', 'description'],
+};
+
+function fmtValue(v) {
+  if (v === null || v === undefined) return '<span class="unk">null</span>';
+  if (typeof v === 'object') return `<pre>${esc(JSON.stringify(v, null, 1))}</pre>`;
+  if (v === '') return '<span class="unk">""</span>';
+  return esc(String(v));
+}
+
+// One row per attribute: unknown values read as Terraform prints them, and a
+// changed value shows what it was next to what it becomes.
+function attrRows(after, before, unknown) {
+  const unk = new Set(unknown || []);
+  const keys = new Set([...Object.keys(after || {}), ...unk,
+                        ...(before ? Object.keys(before) : [])]);
+  const rows = [...keys].filter(k => !SKIP_ATTRS.has(k)).sort().map(k => {
+    let cell;
+    if (unk.has(k) && (after?.[k] === undefined || after?.[k] === null)) {
+      cell = '<span class="unk">(known after apply)</span>';
+    } else {
+      const a = after?.[k], b = before?.[k];
+      const changed = before && JSON.stringify(a) !== JSON.stringify(b);
+      cell = changed
+        ? `<span class="was">${fmtValue(b)}</span><br><span class="now">${fmtValue(a)}</span>`
+        : fmtValue(a);
+    }
+    if (cell === '<span class="unk">null</span>' && !unk.has(k)) return '';
+    return `<tr><td class="k">${esc(k)}</td><td class="v">${cell}</td></tr>`;
+  }).filter(Boolean).join('');
+  return rows ? `<table class="attrs">${rows}</table>`
+              : '<div class="none">no attributes</div>';
+}
+
+function summarize(type, after, unknown) {
+  const unk = new Set(unknown || []);
+  const parts = [];
+  for (const k of SUMMARY_KEYS[type] || []) {
+    if (unk.has(k) && (after?.[k] === undefined || after?.[k] === null)) {
+      parts.push(`${k}=(known after apply)`);
+    } else if (after?.[k] !== undefined && after?.[k] !== null && after?.[k] !== '') {
+      parts.push(`${k}=${after[k]}`);
+    }
+    if (parts.length >= 3) break;
+  }
+  return parts.join('  ');
+}
+
+function relatedHTML(r) {
+  const short = r.address.replace(/^module\..*?\./, '');
+  return `<details class="rel">
+    <summary>
+      <span class="ico">${iconSVG(r.type)}</span>
+      <span><b>${esc(label(r.type || '?'))}</b> ${esc(short)}</span>
+      <span class="pill ${esc(r.status)}" style="margin-left:auto">${esc(r.status || '')}</span>
+    </summary>
+    <div class="inner">
+      ${summarize(r.type, r.after, r.unknown)
+        ? `<div class="sum" style="margin-bottom:6px">${esc(summarize(r.type, r.after, r.unknown))}</div>` : ''}
+      ${attrRows(r.after, null, r.unknown)}
+    </div>
+  </details>`;
+}
+
+async function openDetail(wsName, address) {
+  const drawer = $('drawer');
+  drawer.classList.add('open');
+  $('dr-title').textContent = address.split('.').slice(-2).join('.');
+  $('dr-addr').textContent = `${wsName} · ${address}`;
+  $('dr-body').innerHTML = '<div class="none">loading…</div>';
+  let d;
+  try {
+    const res = await fetch(`/resource?workspace=${encodeURIComponent(wsName)}` +
+                            `&address=${encodeURIComponent(address)}`);
+    if (!res.ok) throw new Error(await res.text());
+    d = await res.json();
+  } catch (err) {
+    $('dr-body').innerHTML = `<div class="ws-err">${esc(err.message)}</div>`;
+    return;
+  }
+  $('dr-ico').innerHTML = iconSVG(d.type);
+  $('dr-title').textContent = `${label(d.type)} · ${d.name}${idx(d.address)}`;
+  const pill = $('dr-pill');
+  pill.textContent = d.status;
+  pill.className = 'pill ' + d.status;
+
+  const sec = (title, html) => `<h3>${title}</h3>${html}`;
+  const rels = list => list && list.length
+    ? list.map(relatedHTML).join('') : '<div class="none">none</div>';
+  // "Attached" is what points at this resource: a route table's routes and
+  // associations, an instance's volume and target-group attachments.
+  $('dr-body').innerHTML =
+    sec(`Attached <span style="color:var(--faint)">(${(d.attached || []).length})</span>`, rels(d.attached)) +
+    sec('Configuration', attrRows(d.after, d.status === 'update' || d.status === 'replace' ? d.before : null, d.unknown)) +
+    sec(`Depends on <span style="color:var(--faint)">(${(d.dependsOn || []).length})</span>`, rels(d.dependsOn));
+}
+
+function closeDetail() { $('drawer').classList.remove('open'); }
+$('dr-close').onclick = closeDetail;
+window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
 
 // ---------- graph tab ---------------------------------------------------
 const elk = new ELK();
@@ -453,19 +685,21 @@ function toElk(state) {
       'elk.padding': '[top=20,left=20,bottom=20,right=20]' },
     children: [], edges: [] };
   groups.set('', root);
+  // Group keys are "<workspace>" or "<workspace>|<module address>", so the
+  // parent of any key is everything before its last separator — and the
+  // parent of a bare workspace is the root.
   const groupFor = (addr, labelText) => {
     if (groups.has(addr)) return groups.get(addr);
-    const parentAddr = addr.includes('|') ? addr.slice(0, addr.lastIndexOf('|'))
-                                          : addr.replace(/(^|\.)module\.[^.]+$/, '');
+    const parentAddr = addr.includes('|') ? addr.slice(0, addr.lastIndexOf('|')) : '';
     const parent = groupFor(parentAddr);
     const g = { id: 'group:' + addr, isModule: true,
-      label: labelText || addr.slice(addr.lastIndexOf('module.')),
+      label: labelText || addr.slice(addr.lastIndexOf('|') + 1),
       layoutOptions: { 'elk.padding': '[top=34,left=16,bottom=16,right=16]' },
       children: [], edges: [] };
     parent.children.push(g); groups.set(addr, g); return g;
   };
   for (const ws of state.workspaces || []) {
-    const wsKey = 'ws|' + ws.name;
+    const wsKey = ws.name;
     groupFor(wsKey, ws.name);
     for (const n of ws.nodes || []) {
       const key = n.module ? wsKey + '|' + n.module : wsKey;

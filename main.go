@@ -86,7 +86,8 @@ func run(ctx context.Context, dir string, port int, printOnly bool) error {
 			srv.SetError(ws.Name, ws.Dir, err.Error())
 			return
 		}
-		srv.SetGraph(ws.Name, ws.Dir, inv.TerraformVersion, graph.Build(inv.Plan))
+		srv.SetGraph(ws.Name, ws.Dir, inv.TerraformVersion,
+			graph.Build(inv.Plan), graph.BuildDetails(inv.Plan))
 		log.Printf("%s: %d resources", ws.Name, len(inv.Resources))
 	}
 
