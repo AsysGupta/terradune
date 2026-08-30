@@ -676,10 +676,11 @@ function drawRibbons(maps) {
       const p = document.createElementNS(svgNS, 'path');
       p.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
       p.setAttribute('fill', 'none');
-      p.setAttribute('stroke', RIBBON_DIM);
-      p.setAttribute('stroke-width', '1.3');
-      // At rest these are quiet connecting lines; the arrowheads appear on
-      // the path being traced, so direction is something you ask for.
+      p.setAttribute('stroke', RIBBON_HOT);
+      p.setAttribute('stroke-width', '2.2');
+      // Nothing is drawn until a card is hovered: the map reads as columns of
+      // resources, and the arrows are the answer to pointing at one.
+      p.setAttribute('stroke-opacity', '0');
       p.dataset.from = from; p.dataset.to = to;
       svg.appendChild(p);
     }
@@ -727,9 +728,7 @@ function wireHover(maps) {
   const clear = () => {
     cards.forEach(c => c.classList.remove('dim', 'hi'));
     paths.forEach(p => {
-      p.classList.remove('dim');
-      p.setAttribute('stroke', RIBBON_DIM);
-      p.setAttribute('stroke-width', '1.3');
+      p.setAttribute('stroke-opacity', '0');
       p.removeAttribute('marker-end');
     });
   };
@@ -743,9 +742,7 @@ function wireHover(maps) {
     });
     paths.forEach(p => {
       const on = edges.has(p.dataset.from + ' ' + p.dataset.to);
-      p.classList.toggle('dim', !on);
-      p.setAttribute('stroke', on ? RIBBON_HOT : RIBBON_DIM);
-      p.setAttribute('stroke-width', on ? '2.2' : '1.3');
+      p.setAttribute('stroke-opacity', on ? '1' : '0');
       if (on) p.setAttribute('marker-end', 'url(#arr-hot)');
       else p.removeAttribute('marker-end');
     });

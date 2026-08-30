@@ -247,6 +247,9 @@ check('ribbons rest without arrowheads and record their direction', function () 
     if (drawn[i].getAttribute('marker-end')) {
       throw new Error('an arrowhead is showing before anything is hovered');
     }
+    if (drawn[i].getAttribute('stroke-opacity') !== '0') {
+      throw new Error('a ribbon is visible before anything is hovered');
+    }
     if (drawn[i].dataset.from && drawn[i].dataset.to) directed++;
   }
   if (directed !== drawn.length) throw new Error('ribbons missing a direction');
@@ -274,9 +277,19 @@ check('hovering puts arrowheads on the traced path only', function () {
   if (joined.indexOf('aws_route_table.public -> aws_internet_gateway.main') === -1) {
     throw new Error('no arrow on to the gateway: ' + joined);
   }
+  // Everything off the path stays invisible while hovering.
+  for (var v = 0; v < drawn.length; v++) {
+    var lit = drawn[v].getAttribute('stroke-opacity') !== '0';
+    if (lit !== !!drawn[v].getAttribute('marker-end')) {
+      throw new Error('a ribbon is visible without an arrowhead, or vice versa');
+    }
+  }
   hoverApi.clear();
   for (var j = 0; j < drawn.length; j++) {
     if (drawn[j].getAttribute('marker-end')) throw new Error('arrowheads outlived the hover');
+    if (drawn[j].getAttribute('stroke-opacity') !== '0') {
+      throw new Error('ribbons stayed visible after the hover ended');
+    }
   }
 });
 
