@@ -8,3 +8,6 @@ examples/modular/pets/note.txt
 
 # Build output
 /terradune
+
+# Stale lock files left when a plan is interrupted
+*.tfstate.lock.info
