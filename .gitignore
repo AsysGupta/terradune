@@ -1,0 +1,10 @@
+# Terraform workspace artifacts (examples are real workspaces)
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+examples/simple/greeting.txt
+examples/modular/roster.txt
+examples/modular/pets/note.txt
+
+# Build output
+/terradune
