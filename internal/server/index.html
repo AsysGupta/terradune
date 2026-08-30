@@ -127,7 +127,13 @@
   .card.destroy .n { text-decoration: line-through; }
   .card .d { color: inherit; opacity: .75; }
   .card.hi { box-shadow: 0 0 0 2px rgba(30,40,60,.22); }
+  .card.pinned { box-shadow: 0 0 0 2px #3d6ea8; }
+  .card.pinned.dim { opacity: 1; }
   .dim { opacity: .2; }
+  #pinned { font-size: 11.5px; color: #3d6ea8; font-weight: 700;
+            background: #eaf1fa; border: 1px solid #bcd3ec; border-radius: 99px;
+            padding: 2px 10px; }
+  #pinned[hidden] { display: none; }
   .contents { margin: 6px 0 0 10px; padding-left: 8px; border-left: 1px dashed currentColor; }
   .contents .card { margin-bottom: 5px; padding: 4px 8px; }
   .contents .card .n { font-size: 11.5px; }
@@ -225,6 +231,7 @@
   <span class="sep"></span>
   <span id="chips"></span>
   <button id="clear" hidden>Clear filters</button>
+  <span id="pinned" hidden></span>
   <span class="txt" id="shown"></span>
 </div>
 <div id="map"><svg id="ribbons"></svg><div id="mapbody"></div></div>
@@ -850,6 +857,24 @@ function tracePath(id, adj) {
 
 // Set by wireHover so the hover behaviour can be exercised without a pointer.
 let hoverApi = null;
+// A pinned card keeps its path on screen while you scroll away from it, and
+// survives the redraw that a re-plan causes.
+let pinnedId = null;
+
+function nodeById(id) {
+  for (const ws of (latest?.workspaces) || []) {
+    for (const n of ws.nodes || []) if (n.id === id) return n;
+  }
+  return null;
+}
+
+function renderPinnedNote() {
+  const el = $('pinned');
+  if (!pinnedId) { el.hidden = true; el.textContent = ''; return; }
+  const n = nodeById(pinnedId);
+  el.hidden = false;
+  el.textContent = `pinned: ${n ? displayName(n) : pinnedId} — Esc to release`;
+}
 
 function wireHover(maps) {
   const scroll = $('map');
@@ -858,11 +883,11 @@ function wireHover(maps) {
   const adj = adjacencyOf(maps.flatMap(m => m.links));
   const connected = id => adj.outFlow.has(id) || adj.intoFlow.has(id) ||
                           adj.outRel.has(id) || adj.intoRel.has(id);
-  const clear = () => {
+  const resetPaths = () => {
     cards.forEach(c => c.classList.remove('dim', 'hi'));
     paths.forEach(p => p.setAttribute('stroke-opacity', '0'));
   };
-  const hover = id => {
+  const applyPath = id => {
     if (!connected(id)) return; // nothing connects here
     const { nodes, edges } = tracePath(id, adj);
     cards.forEach(c => {
@@ -875,17 +900,44 @@ function wireHover(maps) {
         edges.has(p.dataset.from + ' ' + p.dataset.to) ? '1' : '0');
     });
   };
-  hoverApi = { hover, clear };
+
+  // While a card is pinned the pointer stops driving the highlight, so
+  // scrolling away from it — or across other cards — leaves it in place.
+  const hover = id => { if (!pinnedId) applyPath(id); };
+  const clear = () => { if (!pinnedId) resetPaths(); };
+
+  const setPinned = id => {
+    pinnedId = id;
+    cards.forEach(c => c.classList.toggle('pinned', !!id && c.dataset.id === id));
+    if (id) applyPath(id); else resetPaths();
+    renderPinnedNote();
+  };
+
+  hoverApi = { hover, clear, pin: setPinned, pinned: () => pinnedId };
 
   for (const card of cards) {
     const id = card.dataset.id;
+    let clickTimer = null;
     card.addEventListener('mouseenter', () => hover(id));
     card.addEventListener('mouseleave', clear);
+    // A single click opens the details; two pins the path. The wait is what
+    // separates them, so opening a drawer does not also pin.
     card.addEventListener('click', ev => {
       ev.stopPropagation(); // a nested card opens itself, not its subnet
-      openDetail(card.dataset.ws, card.dataset.id);
+      clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => openDetail(card.dataset.ws, id), 220);
+    });
+    card.addEventListener('dblclick', ev => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      clearTimeout(clickTimer);
+      setPinned(pinnedId === id ? null : id);
     });
   }
+
+  // Re-applied after a redraw so a re-plan does not drop the pin.
+  if (pinnedId && cards.some(c => c.dataset.id === pinnedId)) setPinned(pinnedId);
+  else if (pinnedId) setPinned(null);
 }
 
 // ---------- detail drawer -----------------------------------------------
@@ -1006,7 +1058,16 @@ async function openDetail(wsName, address) {
 
 function closeDetail() { $('drawer').classList.remove('open'); }
 $('dr-close').onclick = closeDetail;
-window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  // Escape backs out of one thing at a time: the drawer first, then the pin.
+  if ($('drawer').classList.contains('open')) closeDetail();
+  else if (pinnedId && hoverApi) hoverApi.pin(null);
+});
+// Clicking the empty map releases the pin; cards stop their own clicks here.
+$('map').addEventListener('click', () => {
+  if (pinnedId && hoverApi) hoverApi.pin(null);
+});
 
 // ---------- graph tab ---------------------------------------------------
 const elk = new ELK();

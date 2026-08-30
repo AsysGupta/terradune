@@ -380,6 +380,47 @@ check('a relationship is one hop, so hovering does not sprawl', function () {
   }
 });
 
+check('pinning holds the path, and survives a redraw', function () {
+  filter.text = ''; filter.statuses = new Set();
+  renderMap(STATE);
+  var drawn = document.getElementById('ribbons').children;
+  function visible() {
+    var n = 0;
+    for (var i = 0; i < drawn.length; i++) {
+      if (drawn[i].getAttribute('stroke-opacity') !== '0') n++;
+    }
+    return n;
+  }
+  hoverApi.pin('aws_subnet.public[0]');
+  var lit = visible();
+  if (!lit) throw new Error('pinning revealed nothing');
+  if (hoverApi.pinned() !== 'aws_subnet.public[0]') throw new Error('pin not recorded');
+
+  // Moving the pointer away must not drop a pinned path.
+  hoverApi.clear();
+  if (visible() !== lit) throw new Error('the pinned path was cleared by a mouse-out');
+
+  // A re-plan redraws everything; the pin should come back with it.
+  renderMap(STATE);
+  drawn = document.getElementById('ribbons').children;
+  if (hoverApi.pinned() !== 'aws_subnet.public[0]') throw new Error('pin lost on redraw');
+  if (!visible()) throw new Error('the pinned path did not survive the redraw');
+
+  hoverApi.pin(null);
+  if (hoverApi.pinned()) throw new Error('pin not released');
+  if (visible()) throw new Error('releasing the pin left ribbons behind');
+});
+
+check('a pin on a card that disappears is dropped', function () {
+  renderMap(STATE);
+  hoverApi.pin('aws_subnet.public[0]');
+  filter.statuses = new Set(['destroy']); // fixtures have none, so all cards go
+  renderMap(STATE);
+  if (hoverApi.pinned()) throw new Error('pinned a card that is no longer drawn');
+  filter.statuses = new Set();
+  renderMap(STATE);
+});
+
 check('links are not duplicated', function () {
   for (var i = 0; i < STATE.workspaces.length; i++) {
     var m = buildMap(STATE.workspaces[i]), seen = {};
