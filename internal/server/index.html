@@ -137,6 +137,13 @@
             padding: 12px 14px; margin-bottom: 12px; }
   .others .grid { display: grid; gap: 7px;
                   grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
+  .cat { margin-bottom: 14px; }
+  .cat:last-child { margin-bottom: 0; }
+  .cat > h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 7px;
+              font-size: 11.5px; font-weight: 700; color: var(--text); }
+  .cat > h4 svg { width: 15px; height: 15px; flex: none; }
+  .cat > h4 em { font-style: normal; color: var(--faint); font-weight: 400;
+                 font-size: 11px; }
   .hint { color: var(--faint); font-size: 11px; margin: 6px 2px 0; }
 
   #graph { flex: 1; min-height: 0; display: none; cursor: grab; background: var(--bg); }
@@ -354,6 +361,22 @@ function shareNamedKey(a, b) {
   return false;
 }
 
+// Resources whose whole purpose is to bind two others together. The pair is
+// [from, to] in the direction the diagram should read.
+const CONNECTORS = {
+  aws_volume_attachment: ['aws_instance', 'aws_ebs_volume'],
+  aws_network_interface_attachment: ['aws_instance', 'aws_network_interface'],
+  aws_lb_target_group_attachment: ['aws_lb_target_group', 'aws_instance'],
+  aws_eip_association: ['aws_instance', 'aws_eip'],
+  aws_network_interface_sg_attachment: ['aws_network_interface', 'aws_security_group'],
+};
+
+// The order categories are listed in: what a reader looks for first.
+const CATEGORY_ORDER = ['aws_instance', 'aws_network_interface', 'aws_ebs_volume',
+  'aws_eip', 'aws_lb', 'aws_lb_target_group', 'aws_lb_listener',
+  'aws_security_group', 'aws_network_acl', 'aws_db_instance',
+  'aws_autoscaling_group', 'aws_launch_template'];
+
 // Which resource types can satisfy each way a route names its next hop.
 const ROUTE_TARGET_TYPES = {
   nat_gateway_id: ['aws_nat_gateway'],
@@ -387,8 +410,12 @@ function buildMap(ws) {
   // the columns: the VPC holds its subnets, a subnet is associated with a
   // route table, and that route table reaches a gateway. Hovering then traces
   // a path rather than lighting up a blob.
+  // A link is either a hop of the VPC path — which reads end to end — or a
+  // plain relationship between two resources, which does not.
   const links = [];
-  const add = (from, to) => { if (from && to && from !== to) links.push({ from, to }); };
+  const add = (from, to, flow) => {
+    if (from && to && from !== to) links.push({ from, to, flow: !!flow });
+  };
 
   const subnets = [...nodes.values()].filter(n => n.type === 'aws_subnet');
   for (const [id, n] of nodes) {
@@ -396,7 +423,7 @@ function buildMap(ws) {
     const routeTables = depsOfType(id, m => m.type === 'aws_route_table');
     const associated = depsOfType(id, m => m.type === 'aws_subnet');
     if (associated.length) {
-      for (const s of associated) for (const r of routeTables) add(s, r);
+      for (const s of associated) for (const r of routeTables) add(s, r, true);
       continue;
     }
     // Terraform's graph is transitively reduced, and in modular code the
@@ -405,7 +432,7 @@ function buildMap(ws) {
     // same for_each key, so fall back to that — but only when it names
     // exactly one subnet, since a guess between several would be fiction.
     const byKey = subnets.filter(s => shareNamedKey(s.id, id));
-    if (byKey.length === 1) for (const r of routeTables) add(byKey[0].id, r);
+    if (byKey.length === 1) for (const r of routeTables) add(byKey[0].id, r, true);
   }
   // A route's own configuration mentions every possible kind of next hop, so
   // taking its dependencies at face value points a route at all of them. The
@@ -434,7 +461,7 @@ function buildMap(ws) {
     }
     for (const r of routeTables) {
       for (const g of targets) {
-        add(r, g);
+        add(r, g, true);
         if (!rtGateways.has(r)) rtGateways.set(r, new Set());
         rtGateways.get(r).add(nodes.get(g).type);
       }
@@ -444,7 +471,17 @@ function buildMap(ws) {
   // everything further along is reached by following the path through them.
   for (const [id, n] of nodes) {
     if (n.type === 'aws_subnet')
-      for (const v of depsOfType(id, m => m.type === 'aws_vpc')) add(v, id);
+      for (const v of depsOfType(id, m => m.type === 'aws_vpc')) add(v, id, true);
+  }
+
+  // Attachments exist only to join two resources. Collapsing them is what
+  // lets an instance reach the volume or interface bound to it, which is
+  // otherwise two hops away in the wrong direction.
+  for (const [id, n] of nodes) {
+    const pair = CONNECTORS[n.type];
+    if (!pair) continue;
+    for (const a of depsOfType(id, m => m.type === pair[0]))
+      for (const b of depsOfType(id, m => m.type === pair[1])) add(a, b);
   }
 
   // A subnet is public when a route table it is associated with reaches an
@@ -495,7 +532,27 @@ function buildMap(ws) {
   // ribbons contradict. Route tables and gateways are deliberately not joined
   // here — they are reached through the subnets.
   for (const p of panels) {
-    for (const s of p.subnets) add(p.vpc.id, s.id);
+    for (const s of p.subnets) add(p.vpc.id, s.id, true);
+  }
+
+  // Resources beside the columns are joined to whatever they actually use, so
+  // hovering an instance shows the subnet holding it, its interfaces, its
+  // volumes and its security groups. The column flow is left alone: a link is
+  // only added when one end is one of these resources, never between two
+  // cards that already form a hop of the VPC path.
+  for (const p of panels) {
+    const nested = [...p.contents.values()].flat();
+    const beside = new Set([...p.inVpc, ...nested].map(n => n.id));
+    const drawn = new Set([...p.subnets, ...p.routeTables, ...p.gateways,
+                           ...p.inVpc, ...nested].map(n => n.id));
+    for (const id of drawn) {
+      for (const d of deps.get(id) || []) {
+        if (!drawn.has(d)) continue;
+        if (!beside.has(id) && !beside.has(d)) continue;
+        if (nodes.get(d)?.type === 'aws_route_table') continue; // not a route hop
+        add(id, d);
+      }
+    }
   }
 
   const bySort = (a, b) => a.id.localeCompare(b.id);
@@ -505,13 +562,14 @@ function buildMap(ws) {
   }
   others.sort(bySort);
 
-  const seenLink = new Set();
-  const unique = links.filter(l => {
+  const byPair = new Map();
+  for (const l of links) {
     const key = l.from + ' ' + l.to;
-    if (seenLink.has(key)) return false;
-    seenLink.add(key);
-    return true;
-  });
+    const prev = byPair.get(key);
+    if (!prev) byPair.set(key, l);
+    else if (l.flow) prev.flow = true; // a pair that is ever a hop stays one
+  }
+  const unique = [...byPair.values()];
   return { panels, others, links: unique, nodes, subnetPublic };
 }
 
@@ -586,6 +644,27 @@ function cardHTML(n, detail, nested) {
   </div>`;
 }
 
+// groupedHTML lists resources under a heading per type, so a dozen mixed
+// cards read as "3 instances, 4 interfaces, 2 volumes" instead of a wall.
+function groupedHTML(list) {
+  const byType = new Map();
+  for (const n of list) {
+    if (!byType.has(n.type)) byType.set(n.type, []);
+    byType.get(n.type).push(n);
+  }
+  const rank = t => {
+    const i = CATEGORY_ORDER.indexOf(t);
+    return i === -1 ? CATEGORY_ORDER.length : i;
+  };
+  return [...byType.entries()]
+    .sort((a, b) => rank(a[0]) - rank(b[0]) || label(a[0]).localeCompare(label(b[0])))
+    .map(([type, items]) => `<div class="cat">
+        <h4>${iconSVG(type)}<span>${esc(label(type))}</span>
+          <em>${items.length}</em></h4>
+        <div class="grid">${items.map(n => cardHTML(n)).join('')}</div>
+      </div>`).join('');
+}
+
 function panelHTML(p, m, vis) {
   const keep = list => list.filter(n => vis.has(n.id));
   const subnets = keep(p.subnets), routeTables = keep(p.routeTables);
@@ -630,7 +709,7 @@ function panelHTML(p, m, vis) {
     </div>
   </div>` + (inVpc.length ? `<div class="others">
       <h3>In this VPC <span>(${inVpc.length})</span></h3>
-      <div class="grid">${inVpc.map(n => cardHTML(n)).join('')}</div>
+      ${groupedHTML(inVpc)}
     </div>` : '');
 }
 
@@ -668,7 +747,7 @@ function renderMap(state) {
     const others = m.others.filter(n => vis.has(n.id));
     if (others.length) inner += `<div class="others">
         <h3>Other resources <span>(${others.length})</span></h3>
-        <div class="grid">${others.map(n => cardHTML(n)).join('')}</div>
+        ${groupedHTML(others)}
       </div>`;
     if (!inner && !err) {
       inner = `<div class="empty">${(ws.nodes || []).length && filterActive()
@@ -723,26 +802,49 @@ function drawRibbons(maps) {
   }
 }
 
-// tracePath returns everything on the route through one resource: what leads
-// to it, and what it leads on to. Walking the two directions separately is
-// what keeps a subnet's siblings out of the picture — reaching them would
-// mean going forward to the shared route table and then backwards again.
-function tracePath(id, out, into) {
+// adjacencyOf splits links by kind and direction, which is what lets the two
+// be traced differently.
+function adjacencyOf(links) {
+  const adj = { outFlow: new Map(), intoFlow: new Map(),
+                outRel: new Map(), intoRel: new Map() };
+  const put = (map, k, v) => { if (!map.has(k)) map.set(k, new Set()); map.get(k).add(v); };
+  for (const l of links) {
+    put(l.flow ? adj.outFlow : adj.outRel, l.from, l.to);
+    put(l.flow ? adj.intoFlow : adj.intoRel, l.to, l.from);
+  }
+  return adj;
+}
+
+// tracePath answers "what is this resource's place in the network".
+//
+// The VPC path is followed end to end, because subnet to route table to
+// gateway is a single question. Ordinary relationships stop at one hop: an
+// instance should show the interfaces, volumes and subnet that are its own,
+// not everything those in turn touch, which on a real codebase is most of
+// the account. Each direction is walked separately, which is what keeps a
+// sibling subnet out — reaching it would mean going forward to the shared
+// route table and then back again.
+function tracePath(id, adj) {
   const nodes = new Set([id]);
   const edges = new Set();
-  const walk = (adj, forward) => {
+  const step = (from, to, forward) => {
+    edges.add(forward ? from + ' ' + to : to + ' ' + from);
+    nodes.add(to);
+  };
+  const walkFlow = (map, forward) => {
     const queue = [id], seen = new Set([id]);
     while (queue.length) {
       const cur = queue.shift();
-      for (const next of adj.get(cur) || []) {
-        edges.add(forward ? cur + ' ' + next : next + ' ' + cur);
-        nodes.add(next);
+      for (const next of map.get(cur) || []) {
+        step(cur, next, forward);
         if (!seen.has(next)) { seen.add(next); queue.push(next); }
       }
     }
   };
-  walk(out, true);   // onward: subnet -> route table -> gateway
-  walk(into, false); // back:   vpc -> subnet
+  walkFlow(adj.outFlow, true);
+  walkFlow(adj.intoFlow, false);
+  for (const next of adj.outRel.get(id) || []) step(id, next, true);
+  for (const prev of adj.intoRel.get(id) || []) step(id, prev, false);
   return { nodes, edges };
 }
 
@@ -753,21 +855,16 @@ function wireHover(maps) {
   const scroll = $('map');
   const cards = [...scroll.querySelectorAll('.card')];
   const paths = [...$('ribbons').querySelectorAll('path')];
-  const out = new Map(), into = new Map();
-  for (const m of maps) {
-    for (const { from, to } of m.links) {
-      if (!out.has(from)) out.set(from, new Set());
-      if (!into.has(to)) into.set(to, new Set());
-      out.get(from).add(to); into.get(to).add(from);
-    }
-  }
+  const adj = adjacencyOf(maps.flatMap(m => m.links));
+  const connected = id => adj.outFlow.has(id) || adj.intoFlow.has(id) ||
+                          adj.outRel.has(id) || adj.intoRel.has(id);
   const clear = () => {
     cards.forEach(c => c.classList.remove('dim', 'hi'));
     paths.forEach(p => p.setAttribute('stroke-opacity', '0'));
   };
   const hover = id => {
-    if (!out.has(id) && !into.has(id)) return; // nothing connects here
-    const { nodes, edges } = tracePath(id, out, into);
+    if (!connected(id)) return; // nothing connects here
+    const { nodes, edges } = tracePath(id, adj);
     cards.forEach(c => {
       const on = nodes.has(c.dataset.id);
       c.classList.toggle('dim', !on);

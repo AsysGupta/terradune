@@ -201,14 +201,7 @@ check('hovering a subnet traces its own path and not a sibling', function () {
     if (STATE.workspaces[i].name === 'vpc') vpcWs = STATE.workspaces[i];
   }
   var m = buildMap(vpcWs);
-  var out = new Map(), into = new Map();
-  for (var k = 0; k < m.links.length; k++) {
-    var l = m.links[k];
-    if (!out.has(l.from)) out.set(l.from, new Set());
-    if (!into.has(l.to)) into.set(l.to, new Set());
-    out.get(l.from).add(l.to); into.get(l.to).add(l.from);
-  }
-  var traced = tracePath('aws_subnet.public[0]', out, into);
+  var traced = tracePath('aws_subnet.public[0]', adjacencyOf(m.links));
   if (!traced.nodes.has('aws_vpc.main')) throw new Error('lost the containing VPC');
   if (!traced.nodes.has('aws_route_table.public')) throw new Error('lost the route table');
   if (!traced.nodes.has('aws_internet_gateway.main')) throw new Error('lost the gateway');
@@ -230,14 +223,7 @@ check('hovering a route table reaches its subnets and its gateway', function () 
     if (STATE.workspaces[i].name === 'vpc') vpcWs = STATE.workspaces[i];
   }
   var m = buildMap(vpcWs);
-  var out = new Map(), into = new Map();
-  for (var k = 0; k < m.links.length; k++) {
-    var l = m.links[k];
-    if (!out.has(l.from)) out.set(l.from, new Set());
-    if (!into.has(l.to)) into.set(l.to, new Set());
-    out.get(l.from).add(l.to); into.get(l.to).add(l.from);
-  }
-  var traced = tracePath('aws_route_table.public', out, into);
+  var traced = tracePath('aws_route_table.public', adjacencyOf(m.links));
   if (!traced.nodes.has('aws_subnet.public[0]')) throw new Error('lost an associated subnet');
   if (!traced.nodes.has('aws_subnet.public[1]')) throw new Error('lost an associated subnet');
   if (!traced.nodes.has('aws_internet_gateway.main')) throw new Error('lost the gateway');
@@ -326,6 +312,71 @@ check('a VPC joins its subnets and nothing further', function () {
         }
       }
     }
+  }
+});
+
+check('resources beside the columns are grouped by type', function () {
+  filter.text = ''; filter.statuses = new Set();
+  renderMap(STATE);
+  var h = __sinks['mapbody'] || '';
+  if (h.indexOf('class="cat"') === -1) throw new Error('no category groups rendered');
+  var headings = {}, re = /<span>([^<]*)<\/span>\s*<em>(\d+)<\/em><\/h4>/g, m;
+  while ((m = re.exec(h)) !== null) headings[m[1]] = Number(m[2]);
+  // Instances sit inside their subnet, so what stands beside the columns here
+  // is the storage, the load balancing and the security groups.
+  ['EBS volume', 'Load balancer', 'Security group'].forEach(function (want) {
+    if (!headings[want]) throw new Error('no category for ' + want +
+      '; got ' + Object.keys(headings).join(', '));
+  });
+  if (headings['EBS volume'] !== 2) throw new Error('wrong count for EBS volume');
+  if (!/<h4>\s*<svg/.test(h)) throw new Error('category heading has no icon');
+});
+
+check('hovering an instance reaches its subnet, interfaces and volumes', function () {
+  var ec2 = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'ec2') ec2 = STATE.workspaces[i];
+  }
+  if (!ec2) throw new Error('no ec2 workspace in fixtures');
+  var m = buildMap(ec2), byId = {};
+  for (var j = 0; j < ec2.nodes.length; j++) byId[ec2.nodes[j].id] = ec2.nodes[j];
+  var traced = tracePath('aws_instance.app[0]', adjacencyOf(m.links));
+  var kinds = {};
+  traced.nodes.forEach(function (id) { if (byId[id]) kinds[byId[id].type] = true; });
+  ['aws_subnet', 'aws_ebs_volume', 'aws_security_group'].forEach(function (t) {
+    if (!kinds[t]) {
+      throw new Error('instance did not reach ' + t + '; reached ' + Object.keys(kinds).join(', '));
+    }
+  });
+  // The volume is bound by an attachment, which must be collapsed rather
+  // than left as a dead end.
+  if (!traced.nodes.has('aws_ebs_volume.data[0]')) {
+    throw new Error('did not reach the volume attached to this instance');
+  }
+  if (traced.nodes.has('aws_ebs_volume.data[1]')) {
+    throw new Error('reached another instance volume');
+  }
+});
+
+check('a relationship is one hop, so hovering does not sprawl', function () {
+  var ec2 = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'ec2') ec2 = STATE.workspaces[i];
+  }
+  var m = buildMap(ec2);
+  var traced = tracePath('aws_instance.app[0]', adjacencyOf(m.links));
+  // The load balancer reaches every subnet; an instance sharing a target
+  // group with it must not inherit that whole spread.
+  if (traced.nodes.has('aws_subnet.web[1]')) {
+    throw new Error('hovering an instance dragged in an unrelated subnet');
+  }
+  if (traced.nodes.size > 12) {
+    throw new Error('an instance lit up ' + traced.nodes.size + ' resources');
+  }
+  // A subnet still reads end to end along the VPC path.
+  var viaSubnet = tracePath('aws_subnet.web[0]', adjacencyOf(m.links));
+  if (!viaSubnet.nodes.has('aws_internet_gateway.app')) {
+    throw new Error('the VPC path stopped short of the gateway');
   }
 });
 
