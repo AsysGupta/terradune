@@ -354,6 +354,24 @@ function shareNamedKey(a, b) {
   return false;
 }
 
+// Which resource types can satisfy each way a route names its next hop.
+const ROUTE_TARGET_TYPES = {
+  nat_gateway_id: ['aws_nat_gateway'],
+  gateway_id: ['aws_internet_gateway', 'aws_vpn_gateway'],
+  transit_gateway_id: ['aws_ec2_transit_gateway', 'aws_ec2_transit_gateway_vpc_attachment',
+                       'aws_transit_gateway_vpc_attachment'],
+  vpc_endpoint_id: ['aws_vpc_endpoint'],
+  vpc_peering_connection_id: ['aws_vpc_peering_connection'],
+  egress_only_gateway_id: ['aws_egress_only_internet_gateway'],
+};
+
+// azOf finds an availability zone anywhere in an address, which is how a
+// per-AZ route is matched to the gateway in its own zone.
+function azOf(text) {
+  const m = String(text || '').match(/[a-z]{2}-[a-z]+-\d[a-z]/);
+  return m ? m[0] : '';
+}
+
 // ---------- model -------------------------------------------------------
 function buildMap(ws) {
   const nodes = new Map((ws.nodes || []).map(n => [n.id, n]));
@@ -389,23 +407,44 @@ function buildMap(ws) {
     const byKey = subnets.filter(s => shareNamedKey(s.id, id));
     if (byKey.length === 1) for (const r of routeTables) add(byKey[0].id, r);
   }
+  // A route's own configuration mentions every possible kind of next hop, so
+  // taking its dependencies at face value points a route at all of them. The
+  // plan says which one it actually sets, and only gateways of that kind are
+  // candidates; where several exist the one in the route's own AZ wins.
+  const allGateways = [...nodes.values()].filter(n => GATEWAYS.has(n.type));
   const rtGateways = new Map();
   for (const [id, n] of nodes) {
     if (n.type !== 'aws_route') continue;
-    for (const r of depsOfType(id, m => m.type === 'aws_route_table')) {
-      for (const g of depsOfType(id, m => GATEWAYS.has(m.type))) {
+    const routeTables = depsOfType(id, m => m.type === 'aws_route_table');
+    if (!routeTables.length) continue;
+    const allowed = ROUTE_TARGET_TYPES[n.meta?.route_target] || null;
+    const ofKind = m => GATEWAYS.has(m.type) && (!allowed || allowed.includes(m.type));
+
+    let targets = depsOfType(id, ofKind);
+    if (!targets.length && allowed) {
+      // The dependency was lost in the plan graph; fall back to the gateways
+      // of the right kind, preferring the one sharing this route's zone.
+      let candidates = allGateways.filter(ofKind);
+      if (candidates.length > 1) {
+        const az = azOf(id);
+        const sameZone = candidates.filter(g => azOf(g.id) === az || g.meta?.az === az);
+        if (sameZone.length) candidates = sameZone;
+      }
+      targets = candidates.map(g => g.id);
+    }
+    for (const r of routeTables) {
+      for (const g of targets) {
         add(r, g);
         if (!rtGateways.has(r)) rtGateways.set(r, new Set());
         rtGateways.get(r).add(nodes.get(g).type);
       }
     }
   }
+  // Containment is one layer deep on purpose: the VPC holds its subnets, and
+  // everything further along is reached by following the path through them.
   for (const [id, n] of nodes) {
-    if (n.type === 'aws_subnet' || n.type === 'aws_route_table' || GATEWAYS.has(n.type))
+    if (n.type === 'aws_subnet')
       for (const v of depsOfType(id, m => m.type === 'aws_vpc')) add(v, id);
-    // A NAT gateway sits inside a subnet, so the subnet leads to it.
-    if (n.type === 'aws_nat_gateway')
-      for (const s of depsOfType(id, m => m.type === 'aws_subnet')) add(s, id);
   }
 
   // A subnet is public when a route table it is associated with reaches an
@@ -450,12 +489,13 @@ function buildMap(ws) {
       } else p.inVpc.push(n);
     }
   }
-  // Anything drawn inside a VPC's panel is joined to it. Terraform's graph is
-  // transitively reduced, so a route table's link to its VPC is often hidden
-  // behind an intervening resource; without this the panel would show a
-  // containment the ribbons then contradict.
+  // Every subnet drawn in a VPC's panel is joined to it: Terraform's graph is
+  // transitively reduced, so that link is often hidden behind an intervening
+  // resource, and without this the panel would show a containment the
+  // ribbons contradict. Route tables and gateways are deliberately not joined
+  // here — they are reached through the subnets.
   for (const p of panels) {
-    for (const n of [...p.subnets, ...p.routeTables, ...p.gateways]) add(p.vpc.id, n.id);
+    for (const s of p.subnets) add(p.vpc.id, s.id);
   }
 
   const bySort = (a, b) => a.id.localeCompare(b.id);
@@ -646,12 +686,7 @@ const RIBBON_DIM = '#c9d0d9', RIBBON_HOT = '#3d6ea8';
 
 function drawRibbons(maps) {
   const svg = $('ribbons');
-  svg.innerHTML = `<defs>
-    <marker id="arr-dim" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6"
-      markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#c9d0d9"/></marker>
-    <marker id="arr-hot" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5"
-      markerHeight="6.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#3d6ea8"/></marker>
-  </defs>`;
+  svg.innerHTML = '';
   const scroll = $('map');
   const base = scroll.getBoundingClientRect();
   svg.setAttribute('width', scroll.scrollWidth);
@@ -678,8 +713,9 @@ function drawRibbons(maps) {
       p.setAttribute('fill', 'none');
       p.setAttribute('stroke', RIBBON_HOT);
       p.setAttribute('stroke-width', '2.2');
+      p.setAttribute('stroke-linecap', 'round');
       // Nothing is drawn until a card is hovered: the map reads as columns of
-      // resources, and the arrows are the answer to pointing at one.
+      // resources, and the connections are the answer to pointing at one.
       p.setAttribute('stroke-opacity', '0');
       p.dataset.from = from; p.dataset.to = to;
       svg.appendChild(p);
@@ -727,10 +763,7 @@ function wireHover(maps) {
   }
   const clear = () => {
     cards.forEach(c => c.classList.remove('dim', 'hi'));
-    paths.forEach(p => {
-      p.setAttribute('stroke-opacity', '0');
-      p.removeAttribute('marker-end');
-    });
+    paths.forEach(p => p.setAttribute('stroke-opacity', '0'));
   };
   const hover = id => {
     if (!out.has(id) && !into.has(id)) return; // nothing connects here
@@ -741,10 +774,8 @@ function wireHover(maps) {
       c.classList.toggle('hi', on);
     });
     paths.forEach(p => {
-      const on = edges.has(p.dataset.from + ' ' + p.dataset.to);
-      p.setAttribute('stroke-opacity', on ? '1' : '0');
-      if (on) p.setAttribute('marker-end', 'url(#arr-hot)');
-      else p.removeAttribute('marker-end');
+      p.setAttribute('stroke-opacity',
+        edges.has(p.dataset.from + ' ' + p.dataset.to) ? '1' : '0');
     });
   };
   hoverApi = { hover, clear };

@@ -91,7 +91,7 @@ func BuildWithDOT(plan *tfjson.Plan, dot []byte) *Graph {
 			Name:   rc.Name,
 			Module: rc.ModuleAddress,
 			Status: statusOf(rc.Change.Actions),
-			Meta:   values[rc.Address],
+			Meta:   routeMeta(rc, values[rc.Address]),
 		})
 		cfgAddr := joinAddr(stripIndexes(rc.ModuleAddress), rc.Type+"."+rc.Name)
 		instances[cfgAddr] = append(instances[cfgAddr], rc.Address)
@@ -123,6 +123,50 @@ func BuildWithDOT(plan *tfjson.Plan, dot []byte) *Graph {
 		return g.Edges[i].To < g.Edges[j].To
 	})
 	return g
+}
+
+// routeTargetAttrs are the mutually exclusive ways a route names its next
+// hop. Which one a route uses says what kind of thing it points at, and that
+// is the difference between a subnet reaching the internet and reaching a
+// transit gateway.
+var routeTargetAttrs = []string{
+	"nat_gateway_id", "gateway_id", "transit_gateway_id", "vpc_endpoint_id",
+	"vpc_peering_connection_id", "egress_only_gateway_id", "carrier_gateway_id",
+	"local_gateway_id", "network_interface_id",
+}
+
+// routeMeta records which target attribute a route actually sets. A resource
+// being created has unknown values, so an attribute counts as used when it is
+// either filled in or explicitly pending — anything untouched is null and
+// absent from the unknown set, which is what distinguishes the one target a
+// route uses from the many its configuration merely mentions.
+func routeMeta(rc *tfjson.ResourceChange, meta map[string]string) map[string]string {
+	if rc.Type != "aws_route" || rc.Change == nil {
+		return meta
+	}
+	after, _ := rc.Change.After.(map[string]interface{})
+	unknown, _ := rc.Change.AfterUnknown.(map[string]interface{})
+	for _, attr := range routeTargetAttrs {
+		used := false
+		if v, ok := after[attr]; ok && v != nil && v != "" {
+			used = true
+		}
+		if b, ok := unknown[attr].(bool); ok && b {
+			used = true
+		}
+		if !used {
+			continue
+		}
+		if meta == nil {
+			meta = map[string]string{}
+		}
+		meta["route_target"] = attr
+		if dst, ok := after["destination_cidr_block"].(string); ok && dst != "" {
+			meta["destination"] = dst
+		}
+		break
+	}
+	return meta
 }
 
 // metaKeys maps attribute names to the shorter keys sent to the UI.

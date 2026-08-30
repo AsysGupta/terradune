@@ -180,12 +180,19 @@ check('links point along the columns, vpc -> subnet -> route table -> gateway', 
     kinds[byId[l.from].type + '->' + byId[l.to].type] = true;
   }
   var want = ['aws_vpc->aws_subnet', 'aws_subnet->aws_route_table',
-              'aws_route_table->aws_internet_gateway', 'aws_subnet->aws_nat_gateway'];
+              'aws_route_table->aws_internet_gateway', 'aws_route_table->aws_nat_gateway'];
   for (var w = 0; w < want.length; w++) {
     if (!kinds[want[w]]) throw new Error('missing link direction ' + want[w]);
   }
   // The reverse of containment must not appear: the VPC leads to its subnets.
   if (kinds['aws_subnet->aws_vpc']) throw new Error('containment points the wrong way');
+  // Each hop is one column wide, so nothing may skip the route tables.
+  var skips = ['aws_vpc->aws_route_table', 'aws_vpc->aws_nat_gateway',
+               'aws_vpc->aws_internet_gateway', 'aws_subnet->aws_nat_gateway',
+               'aws_subnet->aws_internet_gateway'];
+  for (var s = 0; s < skips.length; s++) {
+    if (kinds[skips[s]]) throw new Error('a link skips a column: ' + skips[s]);
+  }
 });
 
 check('hovering a subnet traces its own path and not a sibling', function () {
@@ -236,37 +243,34 @@ check('hovering a route table reaches its subnets and its gateway', function () 
   if (!traced.nodes.has('aws_internet_gateway.main')) throw new Error('lost the gateway');
 });
 
-check('ribbons rest without arrowheads and record their direction', function () {
+check('ribbons stay hidden until something is hovered', function () {
   renderMap(STATE);
-  var defs = __sinks['ribbons'] || '';
-  if (defs.indexOf('id="arr-hot"') === -1) throw new Error('arrow marker not defined');
   var drawn = document.getElementById('ribbons').children;
   if (!drawn.length) throw new Error('no ribbons drawn');
   var directed = 0;
   for (var i = 0; i < drawn.length; i++) {
-    if (drawn[i].getAttribute('marker-end')) {
-      throw new Error('an arrowhead is showing before anything is hovered');
-    }
     if (drawn[i].getAttribute('stroke-opacity') !== '0') {
       throw new Error('a ribbon is visible before anything is hovered');
     }
+    if (drawn[i].getAttribute('marker-end')) throw new Error('an arrowhead survived');
     if (drawn[i].dataset.from && drawn[i].dataset.to) directed++;
   }
   if (directed !== drawn.length) throw new Error('ribbons missing a direction');
   print('       (' + drawn.length + ' directed ribbons)');
 });
 
-check('hovering puts arrowheads on the traced path only', function () {
+check('hovering reveals the traced path only', function () {
   renderMap(STATE);
   hoverApi.hover('aws_subnet.public[0]');
   var drawn = document.getElementById('ribbons').children;
   var hot = [], cold = 0;
   for (var i = 0; i < drawn.length; i++) {
-    if (drawn[i].getAttribute('marker-end')) hot.push(drawn[i].dataset.from + ' -> ' + drawn[i].dataset.to);
-    else cold++;
+    if (drawn[i].getAttribute('stroke-opacity') !== '0') {
+      hot.push(drawn[i].dataset.from + ' -> ' + drawn[i].dataset.to);
+    } else cold++;
   }
-  if (!hot.length) throw new Error('hover produced no arrows');
-  if (!cold) throw new Error('hover armed every ribbon rather than a path');
+  if (!hot.length) throw new Error('hover revealed nothing');
+  if (!cold) throw new Error('hover revealed every ribbon rather than a path');
   var joined = hot.join(' | ');
   if (joined.indexOf('aws_vpc.main -> aws_subnet.public[0]') === -1) {
     throw new Error('no arrow from the VPC: ' + joined);
@@ -277,16 +281,8 @@ check('hovering puts arrowheads on the traced path only', function () {
   if (joined.indexOf('aws_route_table.public -> aws_internet_gateway.main') === -1) {
     throw new Error('no arrow on to the gateway: ' + joined);
   }
-  // Everything off the path stays invisible while hovering.
-  for (var v = 0; v < drawn.length; v++) {
-    var lit = drawn[v].getAttribute('stroke-opacity') !== '0';
-    if (lit !== !!drawn[v].getAttribute('marker-end')) {
-      throw new Error('a ribbon is visible without an arrowhead, or vice versa');
-    }
-  }
   hoverApi.clear();
   for (var j = 0; j < drawn.length; j++) {
-    if (drawn[j].getAttribute('marker-end')) throw new Error('arrowheads outlived the hover');
     if (drawn[j].getAttribute('stroke-opacity') !== '0') {
       throw new Error('ribbons stayed visible after the hover ended');
     }
@@ -305,7 +301,7 @@ check('a ribbon runs from the vpc to its subnet, not the reverse', function () {
   if (reversed) throw new Error('ribbon drawn subnet -> vpc');
 });
 
-check('everything shown inside a VPC panel is joined to that VPC', function () {
+check('a VPC joins its subnets and nothing further', function () {
   filter.text = ''; filter.statuses = new Set();
   for (var i = 0; i < STATE.workspaces.length; i++) {
     var ws = STATE.workspaces[i];
@@ -316,10 +312,17 @@ check('everything shown inside a VPC panel is joined to that VPC', function () {
     }
     for (var p = 0; p < m.panels.length; p++) {
       var panel = m.panels[p];
-      var inside = panel.subnets.concat(panel.routeTables, panel.gateways);
-      for (var n = 0; n < inside.length; n++) {
-        if (!(out[panel.vpc.id] || {})[inside[n].id]) {
-          throw new Error(ws.name + ': ' + inside[n].id + ' sits in the panel unjoined');
+      for (var n = 0; n < panel.subnets.length; n++) {
+        if (!(out[panel.vpc.id] || {})[panel.subnets[n].id]) {
+          throw new Error(ws.name + ': subnet ' + panel.subnets[n].id + ' unjoined');
+        }
+      }
+      // Route tables and gateways are reached through the subnets, so a VPC
+      // must not short-circuit straight to them.
+      var beyond = panel.routeTables.concat(panel.gateways);
+      for (var b = 0; b < beyond.length; b++) {
+        if ((out[panel.vpc.id] || {})[beyond[b].id]) {
+          throw new Error(ws.name + ': vpc points straight at ' + beyond[b].id);
         }
       }
     }
