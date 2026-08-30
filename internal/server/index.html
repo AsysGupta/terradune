@@ -488,7 +488,7 @@ function buildMap(ws) {
   const panels = vpcs.map(v => ({ vpc: v, subnets: [], routeTables: [],
                                   gateways: [], inVpc: [], contents: new Map() }));
   const byVpc = new Map(panels.map(p => [p.vpc.id, p]));
-  const others = [];
+  let others = [];
   for (const n of nodes.values()) {
     if (n.type === 'aws_vpc' || GLUE.has(n.type)) continue;
     const p = byVpc.get(vpcOf(n.id));
@@ -527,10 +527,50 @@ function buildMap(ws) {
     }
   }
 
-  // What is not in a VPC still lives somewhere: an SSM parameter belongs to
-  // the region, an IAM role to the account, a random password to neither.
-  const scopes = { region: [], account: [], external: [] };
+  // Networking that serves a VPC is drawn with it: an Elastic IP held by one
+  // of its NAT gateways, the transit gateway its attachment reaches, the
+  // route tables on that transit gateway. Membership spreads outwards along
+  // real connections, so this pulls in what is wired to the VPC and leaves an
+  // unattached address where it actually is — in the region.
+  const placed = new Map();
+  for (const p of panels) {
+    for (const n of [...p.subnets, ...p.routeTables, ...p.gateways, ...p.inVpc,
+                     ...[...p.contents.values()].flat()]) {
+      placed.set(n.id, p);
+    }
+  }
+  const neighbours = new Map();
+  for (const e of ws.edges || []) {
+    if (!neighbours.has(e.from)) neighbours.set(e.from, new Set());
+    if (!neighbours.has(e.to)) neighbours.set(e.to, new Set());
+    neighbours.get(e.from).add(e.to);
+    neighbours.get(e.to).add(e.from);
+  }
+  const stray = others.filter(n => n.meta?.scope === 'network');
+  for (let pass = 0; pass < 4; pass++) {
+    let joined = false;
+    for (const n of stray) {
+      if (placed.has(n.id)) continue;
+      for (const other of neighbours.get(n.id) || []) {
+        const panel = placed.get(other);
+        if (!panel) continue;
+        panel.inVpc.push(n);
+        placed.set(n.id, panel);
+        joined = true;
+        break;
+      }
+    }
+    if (!joined) break; // nothing more reaches a VPC
+  }
+  others = others.filter(n => !placed.has(n.id));
+
+  // What genuinely is not part of a VPC still lives somewhere: an SSM
+  // parameter belongs to the region, an IAM role to the account.
+  const scopes = { region: [], network: [], account: [], external: [] };
   for (const n of others) (scopes[n.meta?.scope] || scopes.external).push(n);
+  // Networking that reached no VPC is simply regional.
+  scopes.region.push(...scopes.network);
+  scopes.network = [];
 
   const bySort = (a, b) => a.id.localeCompare(b.id);
   for (const p of panels) {

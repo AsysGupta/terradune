@@ -489,7 +489,35 @@ check('resources outside a VPC are filed by their real scope', function () {
   // A subnet cannot exist outside a VPC; an SSM parameter or an EIP can.
   if (kinds['aws_subnet'] !== 'vpc') throw new Error('aws_subnet is not vpc-scoped');
   if (kinds['aws_route_table'] !== 'vpc') throw new Error('aws_route_table is not vpc-scoped');
-  if (kinds['aws_eip'] !== 'region') throw new Error('aws_eip is not region-scoped');
+  // An Elastic IP is not inside a VPC, but it serves one, so it is drawn
+  // beside the VPC its NAT gateway attaches it to.
+  if (kinds['aws_eip'] !== 'network') throw new Error('aws_eip is not network-scoped');
+  if (kinds['aws_ssm_parameter'] && kinds['aws_ssm_parameter'] !== 'region') {
+    throw new Error('aws_ssm_parameter should be region-scoped');
+  }
+});
+
+check('networking that serves a VPC is drawn with it', function () {
+  filter.text = ''; filter.statuses = new Set();
+  var vpcWs = null;
+  for (var i = 0; i < STATE.workspaces.length; i++) {
+    if (STATE.workspaces[i].name === 'vpc') vpcWs = STATE.workspaces[i];
+  }
+  var m = buildMap(vpcWs);
+  var inPanel = {};
+  m.panels.forEach(function (p) {
+    p.inVpc.concat(p.subnets, p.routeTables, p.gateways).forEach(function (n) {
+      inPanel[n.id] = true;
+    });
+  });
+  // The EIPs are held by NAT gateways in this VPC, so they belong with it.
+  ['aws_eip.nat[0]', 'aws_eip.nat[1]'].forEach(function (id) {
+    if (!inPanel[id]) throw new Error(id + ' was left out of the VPC it serves');
+  });
+  // And it did not drag in things that merely happen to be nearby.
+  m.scopes.region.concat(m.scopes.account, m.scopes.external).forEach(function (n) {
+    if (n.type === 'aws_eip') throw new Error('an attached EIP stayed outside');
+  });
 });
 
 check('links are not duplicated', function () {

@@ -153,6 +153,23 @@ var vpcScoped = map[string]bool{
 	"aws_default_route_table": true, "aws_default_network_acl": true,
 }
 
+// networkScoped are part of a VPC's networking without living inside one. An
+// Elastic IP is held by the account until a NAT gateway uses it; a transit
+// gateway joins VPCs rather than sitting in one. They belong beside the VPC
+// they serve, which is decided from what they connect to, not from the type
+// alone — so an unattached address stays in the region where it really is.
+var networkScoped = map[string]bool{
+	"aws_eip": true, "aws_eip_association": true,
+	"aws_ec2_transit_gateway": true, "aws_ec2_transit_gateway_route": true,
+	"aws_ec2_transit_gateway_route_table":             true,
+	"aws_ec2_transit_gateway_route_table_association": true,
+	"aws_ec2_transit_gateway_route_table_propagation": true,
+	"aws_vpc_endpoint_service":                        true,
+	"aws_lb_target_group_attachment":                  true, "aws_lb_listener_rule": true,
+	"aws_customer_gateway": true, "aws_vpn_connection": true,
+	"aws_vpn_connection_route": true, "aws_dx_gateway_association": true,
+}
+
 // shortProvider turns registry.terraform.io/hashicorp/aws into "aws".
 func shortProvider(name string) string {
 	if i := strings.LastIndex(name, "/"); i >= 0 {
@@ -176,6 +193,9 @@ func scopeOf(resourceType, provider string) string {
 	}
 	if vpcScoped[resourceType] {
 		return "vpc"
+	}
+	if networkScoped[resourceType] {
+		return "network"
 	}
 	return "region"
 }
