@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"sort"
 	"strings"
 	"testing"
 )
@@ -72,23 +71,17 @@ func TestNormalizeDOTNode(t *testing.T) {
 	}
 }
 
-func TestCorrespondsIgnoresPositionalIndexes(t *testing.T) {
-	// Every copy of a counted resource carries [0], so it cannot tell them
-	// apart; the for_each key can.
-	a := `module.rt["web-az1"].aws_route_table.rt[0]`
-	same := `module.rt["web-az1"].aws_route_table_association.a[0]`
-	other := `module.rt["db-az2"].aws_route_table_association.a[0]`
-	if !corresponds(a, same) {
-		t.Error("instances sharing a for_each key should correspond")
+func TestModulePath(t *testing.T) {
+	cases := map[string]string{
+		`module.rt["web"].aws_route_table.rt[0]`: `module.rt["web"]`,
+		`module.a.module.b["k"].aws_x.y`:         `module.a.module.b["k"]`,
+		`aws_vpc.main`:                           "",
+		`aws_eip.n[1]`:                           "",
 	}
-	if corresponds(a, other) {
-		t.Error("instances of different for_each keys must not correspond")
-	}
-	if !corresponds("aws_eip.n[1]", "aws_nat_gateway.g[1]") {
-		t.Error("unkeyed instances should correspond by position")
-	}
-	if corresponds("aws_eip.n[0]", "aws_nat_gateway.g[1]") {
-		t.Error("different positions must not correspond")
+	for in, want := range cases {
+		if got := modulePath(in); got != want {
+			t.Errorf("modulePath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -126,7 +119,7 @@ func TestApplyDOTDepsLeavesAmbiguousSpansAlone(t *testing.T) {
 	}
 }
 
-func TestApplyDOTDepsPairsByKey(t *testing.T) {
+func TestApplyDOTDepsPairsWithinAModuleInstance(t *testing.T) {
 	r := &resolver{
 		instances: map[string][]string{
 			`module.rt.aws_route_table_association.a`: {
@@ -149,8 +142,8 @@ func TestApplyDOTDepsPairsByKey(t *testing.T) {
 		t.Fatalf("want 2 paired edges, got %d: %+v", len(r.graph.Edges), r.graph.Edges)
 	}
 	for _, e := range r.graph.Edges {
-		if namedKeys(e.From)["x"] != namedKeys(e.To)["x"] {
-			t.Errorf("edge crosses for_each keys: %s -> %s", e.From, e.To)
+		if modulePath(e.From) != modulePath(e.To) {
+			t.Errorf("edge crosses module instances: %s -> %s", e.From, e.To)
 		}
 	}
 }
@@ -169,13 +162,22 @@ func TestIsModuleContainer(t *testing.T) {
 	}
 }
 
-func TestNamedKeysSorted(t *testing.T) {
-	got := []string{}
-	for k := range namedKeys(`module.rt["web-az1"].aws_route_table.rt[0]`) {
-		got = append(got, k)
+// Two counted resources in the same module carry no evidence of which copy
+// pairs with which, so nothing is drawn rather than pairing them by position.
+func TestApplyDOTDepsDoesNotPairByPosition(t *testing.T) {
+	r := &resolver{
+		instances: map[string][]string{
+			"aws_nat_gateway.g": {"aws_nat_gateway.g[0]", "aws_nat_gateway.g[1]"},
+			"aws_eip.n":         {"aws_eip.n[0]", "aws_eip.n[1]"},
+		},
+		seen:     map[Edge]bool{},
+		cfgPairs: map[string]bool{},
+		graph:    &Graph{},
 	}
-	sort.Strings(got)
-	if len(got) != 1 || got[0] != "web-az1" {
-		t.Errorf("namedKeys = %v, want [web-az1]", got)
+	r.applyDOTDeps(map[string]map[string]bool{
+		"aws_nat_gateway.g": {"aws_eip.n": true},
+	})
+	if len(r.graph.Edges) != 0 {
+		t.Errorf("paired counted instances by position: %+v", r.graph.Edges)
 	}
 }

@@ -159,9 +159,17 @@ func DependenciesFromDOT(dot []byte, isResource func(string) bool) map[string]ma
 }
 
 var (
-	allKeysRe = regexp.MustCompile(`\[([^\]]+)\]`)
-	digitsRe  = regexp.MustCompile(`^\d+$`)
+	allKeysRe      = regexp.MustCompile(`\[([^\]]+)\]`)
+	digitsRe       = regexp.MustCompile(`^\d+$`)
+	modulePrefixRe = regexp.MustCompile(`^((?:module\.[^.\[]+(?:\[[^\]]*\])?\.)*)`)
 )
+
+// modulePath returns the module instance an address lives in, keys included:
+// module.rt["web"].aws_route_table.rt[0] -> module.rt["web"]. The root module
+// is the empty string.
+func modulePath(addr string) string {
+	return strings.TrimSuffix(modulePrefixRe.FindString(addr), ".")
+}
 
 // namedKeys returns an address's for_each keys, ignoring positional indexes.
 // module.rt["web-az1"].aws_route_table.rt[0] yields {"web-az1"}: the string
@@ -178,32 +186,14 @@ func namedKeys(addr string) map[string]bool {
 	return out
 }
 
-// corresponds reports whether two instances are the matching pair of an
-// expanded dependency: sharing a for_each key when both carry one, and
-// otherwise sitting at the same positional index.
-func corresponds(a, b string) bool {
-	ka, kb := namedKeys(a), namedKeys(b)
-	if len(ka) > 0 && len(kb) > 0 {
-		for k := range ka {
-			if kb[k] {
-				return true
-			}
-		}
-		return false
-	}
-	ia, ib := instanceKey(a), instanceKey(b)
-	return ia != "" && ia == ib
-}
-
 // applyDOTDeps adds instance edges for configuration pairs the reference
 // resolver could not connect.
 //
 // Terraform's graph does not expand modules, so a dependency between two
-// multi-instance resources is known only at configuration level. Where the
-// instances correspond by key the pairing is exact; where they cannot be
-// matched the honest answer is that the plan does not say which copy talks to
-// which, and drawing every combination would assert a mesh that does not
-// exist, so those are left out.
+// expanded resources is known only at configuration level. An edge is drawn
+// only where the instance is not in doubt: the copy inside the same module
+// instance, or a resource that has just one. Everything else is left out
+// rather than inferred, because a drawn edge reads as a fact.
 func (r *resolver) applyDOTDeps(deps map[string]map[string]bool) {
 	for fromCfg, tos := range deps {
 		fromInstances := r.instances[fromCfg]
@@ -218,22 +208,22 @@ func (r *resolver) applyDOTDeps(deps map[string]map[string]bool) {
 			if len(toInstances) == 0 {
 				continue
 			}
-			// A single target is unambiguous however many depend on it.
-			// A single dependant facing many targets is not: one load
-			// balancer reached through a local depends on the subnet
-			// resource, not on all twelve of its instances, and claiming
-			// otherwise says it sits in every subnet in the VPC.
-			if len(toInstances) == 1 {
-				for _, from := range fromInstances {
-					r.addEdge(from, toInstances[0])
-				}
-				continue
+			byModule := map[string][]string{}
+			for _, to := range toInstances {
+				byModule[modulePath(to)] = append(byModule[modulePath(to)], to)
 			}
 			for _, from := range fromInstances {
-				for _, to := range toInstances {
-					if corresponds(from, to) {
-						r.addEdge(from, to)
-					}
+				// A reference inside a module instance can only mean that
+				// instance's own copy, so one candidate there is certain.
+				if own := byModule[modulePath(from)]; len(own) == 1 {
+					r.addEdge(from, own[0])
+					continue
+				}
+				// Otherwise only a lone instance overall is certain; with
+				// several, the plan does not say which, and a guess would
+				// read as fact.
+				if len(toInstances) == 1 {
+					r.addEdge(from, toInstances[0])
 				}
 			}
 		}

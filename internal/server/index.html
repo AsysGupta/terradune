@@ -350,24 +350,6 @@ const esc = t => String(t).replace(/[&<>"]/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const idx = a => (a.match(/\[[^\]]+\]$/) || [''])[0];
 
-// namedKeys are an address's for_each keys, ignoring positional indexes:
-// every copy of a counted resource carries [0], so it identifies nothing.
-function namedKeys(addr) {
-  const out = new Set();
-  for (const m of String(addr).matchAll(/\[([^\]]+)\]/g)) {
-    const k = m[1].replace(/^"|"$/g, '');
-    if (!/^\d+$/.test(k)) out.add(k);
-  }
-  return out;
-}
-
-function shareNamedKey(a, b) {
-  const ka = namedKeys(a), kb = namedKeys(b);
-  if (!ka.size || !kb.size) return false;
-  for (const k of ka) if (kb.has(k)) return true;
-  return false;
-}
-
 // Resources whose whole purpose is to bind two others together. The pair is
 // [from, to] in the direction the diagram should read.
 const CONNECTORS = {
@@ -395,13 +377,6 @@ const ROUTE_TARGET_TYPES = {
   egress_only_gateway_id: ['aws_egress_only_internet_gateway'],
 };
 
-// azOf finds an availability zone anywhere in an address, which is how a
-// per-AZ route is matched to the gateway in its own zone.
-function azOf(text) {
-  const m = String(text || '').match(/[a-z]{2}-[a-z]+-\d[a-z]/);
-  return m ? m[0] : '';
-}
-
 // ---------- model -------------------------------------------------------
 function buildMap(ws) {
   const nodes = new Map((ws.nodes || []).map(n => [n.id, n]));
@@ -424,7 +399,6 @@ function buildMap(ws) {
     if (from && to && from !== to) links.push({ from, to, flow: !!flow });
   };
 
-  const subnets = [...nodes.values()].filter(n => n.type === 'aws_subnet');
   for (const [id, n] of nodes) {
     if (n.type !== 'aws_route_table_association') continue;
     const routeTables = depsOfType(id, m => m.type === 'aws_route_table');
@@ -433,19 +407,14 @@ function buildMap(ws) {
       for (const s of associated) for (const r of routeTables) add(s, r, true);
       continue;
     }
-    // Terraform's graph is transitively reduced, and in modular code the
-    // subnet an association points at is often hidden behind an intervening
-    // resource. The association and its subnet are usually expanded over the
-    // same for_each key, so fall back to that — but only when it names
-    // exactly one subnet, since a guess between several would be fiction.
-    const byKey = subnets.filter(s => shareNamedKey(s.id, id));
-    if (byKey.length === 1) for (const r of routeTables) add(byKey[0].id, r, true);
+    // If the plan does not record which subnet, nothing is drawn: the
+    // association and its subnet often share a for_each key, but matching on
+    // that is a guess about names, not something the plan states.
   }
   // A route's own configuration mentions every possible kind of next hop, so
   // taking its dependencies at face value points a route at all of them. The
   // plan says which one it actually sets, and only gateways of that kind are
-  // candidates; where several exist the one in the route's own AZ wins.
-  const allGateways = [...nodes.values()].filter(n => GATEWAYS.has(n.type));
+  // candidates.
   const rtGateways = new Map();
   for (const [id, n] of nodes) {
     if (n.type !== 'aws_route') continue;
@@ -454,18 +423,9 @@ function buildMap(ws) {
     const allowed = ROUTE_TARGET_TYPES[n.meta?.route_target] || null;
     const ofKind = m => GATEWAYS.has(m.type) && (!allowed || allowed.includes(m.type));
 
-    let targets = depsOfType(id, ofKind);
-    if (!targets.length && allowed) {
-      // The dependency was lost in the plan graph; fall back to the gateways
-      // of the right kind, preferring the one sharing this route's zone.
-      let candidates = allGateways.filter(ofKind);
-      if (candidates.length > 1) {
-        const az = azOf(id);
-        const sameZone = candidates.filter(g => azOf(g.id) === az || g.meta?.az === az);
-        if (sameZone.length) candidates = sameZone;
-      }
-      targets = candidates.map(g => g.id);
-    }
+    // Only gateways the plan actually ties to this route. Picking one by
+    // zone or name when the plan is silent would put an arrow on a guess.
+    const targets = depsOfType(id, ofKind);
     for (const r of routeTables) {
       for (const g of targets) {
         add(r, g, true);
@@ -533,15 +493,6 @@ function buildMap(ws) {
       } else p.inVpc.push(n);
     }
   }
-  // Every subnet drawn in a VPC's panel is joined to it: Terraform's graph is
-  // transitively reduced, so that link is often hidden behind an intervening
-  // resource, and without this the panel would show a containment the
-  // ribbons contradict. Route tables and gateways are deliberately not joined
-  // here — they are reached through the subnets.
-  for (const p of panels) {
-    for (const s of p.subnets) add(p.vpc.id, s.id, true);
-  }
-
   // Resources beside the columns are joined to whatever they actually use, so
   // hovering an instance shows the subnet holding it, its interfaces, its
   // volumes and its security groups. The column flow is left alone: a link is
