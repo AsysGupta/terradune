@@ -236,24 +236,48 @@ check('hovering a route table reaches its subnets and its gateway', function () 
   if (!traced.nodes.has('aws_internet_gateway.main')) throw new Error('lost the gateway');
 });
 
-check('ribbons carry arrowheads and record their direction', function () {
+check('ribbons rest without arrowheads and record their direction', function () {
   renderMap(STATE);
   var defs = __sinks['ribbons'] || '';
-  if (defs.indexOf('id="arr-dim"') === -1 || defs.indexOf('id="arr-hot"') === -1) {
-    throw new Error('arrow markers not defined');
-  }
+  if (defs.indexOf('id="arr-hot"') === -1) throw new Error('arrow marker not defined');
   var drawn = document.getElementById('ribbons').children;
   if (!drawn.length) throw new Error('no ribbons drawn');
-  var withArrow = 0, directed = 0;
+  var directed = 0;
   for (var i = 0; i < drawn.length; i++) {
-    if (drawn[i].getAttribute('marker-end')) withArrow++;
+    if (drawn[i].getAttribute('marker-end')) {
+      throw new Error('an arrowhead is showing before anything is hovered');
+    }
     if (drawn[i].dataset.from && drawn[i].dataset.to) directed++;
-  }
-  if (withArrow !== drawn.length) {
-    throw new Error(withArrow + ' of ' + drawn.length + ' ribbons have arrowheads');
   }
   if (directed !== drawn.length) throw new Error('ribbons missing a direction');
   print('       (' + drawn.length + ' directed ribbons)');
+});
+
+check('hovering puts arrowheads on the traced path only', function () {
+  renderMap(STATE);
+  hoverApi.hover('aws_subnet.public[0]');
+  var drawn = document.getElementById('ribbons').children;
+  var hot = [], cold = 0;
+  for (var i = 0; i < drawn.length; i++) {
+    if (drawn[i].getAttribute('marker-end')) hot.push(drawn[i].dataset.from + ' -> ' + drawn[i].dataset.to);
+    else cold++;
+  }
+  if (!hot.length) throw new Error('hover produced no arrows');
+  if (!cold) throw new Error('hover armed every ribbon rather than a path');
+  var joined = hot.join(' | ');
+  if (joined.indexOf('aws_vpc.main -> aws_subnet.public[0]') === -1) {
+    throw new Error('no arrow from the VPC: ' + joined);
+  }
+  if (joined.indexOf('aws_subnet.public[0] -> aws_route_table.public') === -1) {
+    throw new Error('no arrow to the route table: ' + joined);
+  }
+  if (joined.indexOf('aws_route_table.public -> aws_internet_gateway.main') === -1) {
+    throw new Error('no arrow on to the gateway: ' + joined);
+  }
+  hoverApi.clear();
+  for (var j = 0; j < drawn.length; j++) {
+    if (drawn[j].getAttribute('marker-end')) throw new Error('arrowheads outlived the hover');
+  }
 });
 
 check('a ribbon runs from the vpc to its subnet, not the reverse', function () {

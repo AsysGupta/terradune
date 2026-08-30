@@ -11,11 +11,17 @@ function __fakeEl(id, tag) {
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return this.attrs[k] === undefined ? null : this.attrs[k]; },
+    removeAttribute(k) { delete this.attrs[k]; },
     appendChild(c) { this.children.push(c); return c; },
     insertAdjacentHTML() {},
     addEventListener() {}, removeEventListener() {},
     querySelector(sel) { return __cardFor(sel); },
-    querySelectorAll(sel) { return sel === '.card' ? __allCards() : []; },
+    querySelectorAll(sel) {
+      if (sel === '.card') return __allCards();
+      // Element-name selectors resolve against this element's own children,
+      // which is how the ribbon paths are collected.
+      return this.children.filter(function (c) { return c.tag === sel; });
+    },
     getBoundingClientRect() {
       return { left: 0, top: 0, width: 1200, height: 800, right: 1200, bottom: 800 };
     },
